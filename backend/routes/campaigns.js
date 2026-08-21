@@ -116,15 +116,22 @@ router.post('/send', async (req, res) => {
         unsubscribed: false
       });
 
-      const openTrackerUrl = `http://localhost:5000/api/analytics/open/${logRecord._id}`;
-      const unsubscribeUrl = `http://localhost:5000/api/analytics/unsubscribe/${logRecord._id}`;
-
+      // Wrap links through Next.js tracking route handlers for real-time analytics
       let personalizedHtml = processedHtml
         .replace(/{{name}}/g, contact.name || 'Valued Client')
         .replace(/{{email}}/g, contact.email || '')
         .replace(/{{company}}/g, contact.company || 'Your Company')
         .replace(/{{mobile}}/g, contact.mobile || '')
         .replace(/{{industry}}/g, contact.industry || '');
+
+      personalizedHtml = personalizedHtml.replace(/href="([^"]+)"/g, (m, origUrl) => {
+        if (origUrl.includes('/api/analytics')) return m;
+        const clickTrackerUrl = `http://localhost:3000/api/analytics/click?id=${logRecord._id}&url=${encodeURIComponent(origUrl)}`;
+        return `href="${clickTrackerUrl}"`;
+      });
+
+      const openTrackerUrl = `http://localhost:3000/api/analytics/open?id=${logRecord._id}`;
+      const unsubscribeUrl = `http://localhost:3000/api/analytics/unsubscribe?id=${logRecord._id}`;
 
       // Append Open Tracking Pixel & Unsubscribe Footer
       personalizedHtml += `<img src="${openTrackerUrl}" width="1" height="1" style="display:none;" alt="" />`;
