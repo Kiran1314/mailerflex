@@ -29,7 +29,7 @@ app.use('/api/signatures', signatureRoutes);
 app.use('/api/senders', senderRoutes);
 app.use('/api/analytics', analyticsRoutes);
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mailer-saas')
   .then(() => {
     console.log('MongoDB Connected Locally');

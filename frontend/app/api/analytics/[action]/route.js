@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import axios from 'axios';
 
-const BACKEND_URL = 'http://localhost:5000/api/analytics';
+const BACKEND_URL = 'http://localhost:5001/api/analytics';
 
 export async function GET(request, { params }) {
   const { action } = await params;
@@ -22,9 +22,9 @@ export async function GET(request, { params }) {
 
     if (action === 'click') {
       // Forward click tracking to backend
-      await axios.get(`http://localhost:5000/api/analytics/click/${id}`);
+      await axios.get(`http://localhost:5001/api/analytics/click/${id}`);
       // Redirect user to their actual intended destination URL
-      return NextResponse.redirect(targetUrl || 'http://localhost:5000');
+      return NextResponse.redirect(targetUrl || 'http://localhost:5001');
     }
 
     if (action === 'unsubscribe') {

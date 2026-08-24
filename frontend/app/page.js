@@ -68,20 +68,19 @@ export default function Dashboard() {
     attachments: null
   });
 
-  // Keep a ref of campaignData so background polls don't overwrite active user selections
   const campaignDataRef = useRef(campaignData);
   campaignDataRef.current = campaignData;
 
   const fetchData = async (isInitial = false) => {
     try {
       const [contactRes, campRes, tempRes, sigRes, senderRes, analyticsRes, groupRes] = await Promise.all([
-        axios.get('http://localhost:5000/api/contacts').catch(() => ({ data: [] })),
-        axios.get('http://localhost:5000/api/campaigns').catch(() => ({ data: [] })),
-        axios.get('http://localhost:5000/api/templates').catch(() => ({ data: [] })),
-        axios.get('http://localhost:5000/api/signatures').catch(() => ({ data: [] })),
-        axios.get('http://localhost:5000/api/senders').catch(() => ({ data: [] })),
-        axios.get('http://localhost:5000/api/analytics').catch(() => ({ data: { summary: {}, dailyTrends: [], logs: [] } })),
-        axios.get('http://localhost:5000/api/contacts/groups').catch(() => ({ data: ['General'] }))
+        axios.get('http://localhost:5001/api/contacts').catch(() => ({ data: [] })),
+        axios.get('http://localhost:5001/api/campaigns').catch(() => ({ data: [] })),
+        axios.get('http://localhost:5001/api/templates').catch(() => ({ data: [] })),
+        axios.get('http://localhost:5001/api/signatures').catch(() => ({ data: [] })),
+        axios.get('http://localhost:5001/api/senders').catch(() => ({ data: [] })),
+        axios.get('http://localhost:5001/api/analytics').catch(() => ({ data: { summary: {}, dailyTrends: [], logs: [] } })),
+        axios.get('http://localhost:5001/api/contacts/groups').catch(() => ({ data: ['General'] }))
       ]);
 
       setContacts(contactRes.data || []);
@@ -118,7 +117,6 @@ export default function Dashboard() {
     fetchData(true);
   }, []);
 
-  // Real-time background data polling every 5 seconds (skips form resets)
   useEffect(() => {
     const pollInterval = setInterval(() => {
       fetchData(false);
@@ -137,7 +135,7 @@ export default function Dashboard() {
     const formData = new FormData();
     formData.append('file', file);
     try {
-      await axios.post('http://localhost:5000/api/contacts/upload', formData);
+      await axios.post('http://localhost:5001/api/contacts/upload', formData);
       triggerNotification('Contacts successfully imported!');
       setFile(null);
       fetchData(false);
@@ -150,10 +148,10 @@ export default function Dashboard() {
     e.preventDefault();
     try {
       if (editingId) {
-        await axios.put(`http://localhost:5000/api/contacts/${editingId}`, contactForm);
+        await axios.put(`http://localhost:5001/api/contacts/${editingId}`, contactForm);
         triggerNotification('Contact updated!');
       } else {
-        await axios.post('http://localhost:5000/api/contacts', contactForm);
+        await axios.post('http://localhost:5001/api/contacts', contactForm);
         triggerNotification('Contact created!');
       }
       setContactForm({ name: '', email: '', company: '', mobile: '', industry: '', group: 'General' });
@@ -166,7 +164,7 @@ export default function Dashboard() {
 
   const handleDeleteContact = async (id) => {
     if (confirm('Delete contact?')) {
-      await axios.delete(`http://localhost:5000/api/contacts/${id}`);
+      await axios.delete(`http://localhost:5001/api/contacts/${id}`);
       triggerNotification('Contact deleted.');
       fetchData(false);
     }
@@ -176,7 +174,7 @@ export default function Dashboard() {
     if (selectedContactIds.length === 0) return;
     if (confirm(`Are you sure you want to delete ${selectedContactIds.length} contacts?`)) {
       try {
-        await Promise.all(selectedContactIds.map(id => axios.delete(`http://localhost:5000/api/contacts/${id}`)));
+        await Promise.all(selectedContactIds.map(id => axios.delete(`http://localhost:5001/api/contacts/${id}`)));
         triggerNotification(`${selectedContactIds.length} contacts deleted.`);
         setSelectedContactIds([]);
         fetchData(false);
@@ -272,7 +270,7 @@ export default function Dashboard() {
   const handleSaveSender = async (e) => {
     e.preventDefault();
     try {
-      await axios.post('http://localhost:5000/api/senders', senderForm);
+      await axios.post('http://localhost:5001/api/senders', senderForm);
       triggerNotification('Sender email saved successfully!');
       setSenderForm({ id: null, email: '', host: 'smtp.hostinger.com', port: 587, password: '' });
       fetchData(false);
@@ -283,7 +281,7 @@ export default function Dashboard() {
 
   const handleDeleteSender = async (id) => {
     if (confirm('Delete this sender email?')) {
-      await axios.delete(`http://localhost:5000/api/senders/${id}`);
+      await axios.delete(`http://localhost:5001/api/senders/${id}`);
       triggerNotification('Sender deleted.');
       fetchData(false);
     }
@@ -301,7 +299,7 @@ export default function Dashboard() {
     if (sigFile) formData.append('signatureImage', sigFile);
 
     try {
-      const res = await axios.post('http://localhost:5000/api/signatures', formData, {
+      const res = await axios.post('http://localhost:5001/api/signatures', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       if (res.data && res.data.htmlContent) {
@@ -313,6 +311,20 @@ export default function Dashboard() {
     } catch (err) {
       triggerNotification('Failed to save signature.');
     }
+  };
+
+  const handleDeleteSignature = async (id) => {
+    if (confirm('Delete this signature configuration?')) {
+      await axios.delete(`http://localhost:5001/api/signatures/${id}`);
+      triggerNotification('Signature deleted.');
+      fetchData(false);
+    }
+  };
+
+  const handleEditSignatureItem = (sig) => {
+    setSelectedSigEmail(sig.emailId);
+    setSignatureHtml(sig.htmlContent);
+    triggerNotification(`Loaded signature for ${sig.emailId} into editor.`);
   };
 
   const handleSigEmailChange = (e) => {
@@ -336,7 +348,7 @@ export default function Dashboard() {
 
   const handleSaveTemplate = async (e) => {
     e.preventDefault();
-    await axios.post('http://localhost:5000/api/templates', templateForm);
+    await axios.post('http://localhost:5001/api/templates', templateForm);
     triggerNotification('Template saved!');
     setTemplateForm({ id: null, title: '', subject: '', htmlContent: '<p>New Template</p>', isDefault: false });
     fetchData(false);
@@ -344,7 +356,7 @@ export default function Dashboard() {
 
   const handleDeleteTemplate = async (id) => {
     if (confirm('Delete template?')) {
-      await axios.delete(`http://localhost:5000/api/templates/${id}`);
+      await axios.delete(`http://localhost:5001/api/templates/${id}`);
       triggerNotification('Template deleted.');
       fetchData(false);
     }
@@ -408,7 +420,7 @@ export default function Dashboard() {
         });
       }, 350);
 
-      const response = await axios.post('http://localhost:5000/api/campaigns/send', campaignData);
+      const response = await axios.post('http://localhost:5001/api/campaigns/send', campaignData);
       
       clearInterval(progressInterval);
       setSendProgress({ current: 100, total: 100 });
@@ -919,33 +931,73 @@ export default function Dashboard() {
 
             {/* SIGNATURES MANAGER */}
             {activeTab === 'signatures-mgr' && (
-              <motion.div key="signatures-mgr" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                  <h3 className="text-base font-bold text-slate-800">Email Signature Manager</h3>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Select Email ID for Signature</label>
-                    <select value={selectedSigEmail} onChange={handleSigEmailChange} className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white">
-                      {senders.map(s => <option key={s._id} value={s.email}>{s.email}</option>)}
-                    </select>
+              <motion.div key="signatures-mgr" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                    <h3 className="text-base font-bold text-slate-800">Email Signature Manager</h3>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Select Email ID for Signature</label>
+                      <select value={selectedSigEmail} onChange={handleSigEmailChange} className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white">
+                        {senders.map(s => <option key={s._id} value={s.email}>{s.email}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Upload Signature Image</label>
+                      <input type="file" accept="image/*" onChange={(e) => setSigFile(e.target.files[0])} className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-600"/>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Signature Editor</label>
+                      <EmailEditor 
+                        content={signatureHtml} 
+                        onChange={(html) => setSignatureHtml(html)}
+                      />
+                    </div>
+                    <button onClick={handleSaveSignature} className="w-full bg-blue-600 text-white py-3 rounded-xl text-sm font-semibold hover:bg-blue-700 transition">Save Signature for {selectedSigEmail}</button>
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Upload Signature Image (Saved in project folder)</label>
-                    <input type="file" accept="image/*" onChange={(e) => setSigFile(e.target.files[0])} className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-600"/>
+
+                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
+                    <h3 className="text-base font-bold text-slate-800 mb-4">Live Signature Preview ({selectedSigEmail})</h3>
+                    <div className="flex-1 border border-slate-200 rounded-xl p-4 bg-slate-50 overflow-auto prose prose-sm max-w-none [&>img]:w-auto [&>img]:max-w-[1109px] [&>img]:h-auto">
+                      <div dangerouslySetInnerHTML={{ __html: signatureHtml }} />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Signature Editor</label>
-                    <EmailEditor 
-                      content={signatureHtml} 
-                      onChange={(html) => setSignatureHtml(html)}
-                    />
-                  </div>
-                  <button onClick={handleSaveSignature} className="w-full bg-blue-600 text-white py-3 rounded-xl text-sm font-semibold hover:bg-blue-700 transition">Save Signature for {selectedSigEmail}</button>
                 </div>
 
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
-                  <h3 className="text-base font-bold text-slate-800 mb-4">Live Signature Preview ({selectedSigEmail})</h3>
-                  <div className="flex-1 border border-slate-200 rounded-xl p-4 bg-slate-50 overflow-auto prose prose-sm max-w-none [&>img]:max-w-[160px] [&>img]:w-full [&>img]:h-auto">
-                    <div dangerouslySetInnerHTML={{ __html: signatureHtml }} />
+                {/* CREATED SIGNATURES LIST TABLE WITH EDIT & DELETE */}
+                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+                  <div className="p-4 border-b border-slate-200 bg-slate-50">
+                    <h3 className="text-sm font-bold text-slate-800 uppercase">Created Signatures ({signatures.length})</h3>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50/50">
+                          <th className="p-4">Sender Email ID</th>
+                          <th className="p-4">Signature HTML Preview</th>
+                          <th className="p-4 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-sm">
+                        {signatures.length > 0 ? (
+                          signatures.map(sig => (
+                            <tr key={sig._id} className="hover:bg-slate-50/50">
+                              <td className="p-4 font-bold text-slate-800">{sig.emailId}</td>
+                              <td className="p-4 max-w-md truncate text-slate-600 text-xs font-mono bg-slate-50 p-2 rounded">
+                                {sig.htmlContent}
+                              </td>
+                              <td className="p-4 text-right space-x-2">
+                                <button onClick={() => handleEditSignatureItem(sig)} className="text-blue-600 text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-50">Edit</button>
+                                <button onClick={() => handleDeleteSignature(sig._id)} className="text-rose-600 text-xs font-semibold px-2.5 py-1 rounded-lg bg-rose-50">Delete</button>
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan="3" className="p-8 text-center text-slate-400 italic">No signatures created yet.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </motion.div>
@@ -970,7 +1022,7 @@ export default function Dashboard() {
                   </div>
                   <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
                     <h3 className="text-base font-bold text-slate-800 mb-4">Live Template Preview</h3>
-                    <div className="flex-1 border border-slate-200 rounded-xl p-4 bg-slate-50 overflow-auto prose prose-sm max-w-none [&>img]:max-w-[160px] [&>img]:w-full [&>img]:h-auto">
+                    <div className="flex-1 border border-slate-200 rounded-xl p-4 bg-slate-50 overflow-auto prose prose-sm max-w-none [&>img]:w-auto [&>img]:max-w-[1109px] [&>img]:h-auto">
                       <div dangerouslySetInnerHTML={{ __html: templateForm.htmlContent }} />
                     </div>
                   </div>
@@ -1063,7 +1115,7 @@ export default function Dashboard() {
 
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
                   <h3 className="text-base font-bold text-slate-800 mb-4">Live Email Preview</h3>
-                  <div className="flex-1 border border-slate-200 rounded-xl p-6 bg-slate-50 overflow-auto prose prose-sm max-w-none [&>img]:max-w-[160px] [&>img]:w-full [&>img]:h-auto">
+                  <div className="flex-1 border border-slate-200 rounded-xl p-6 bg-slate-50 overflow-auto prose prose-sm max-w-none [&>img]:w-auto [&>img]:max-w-[1109px] [&>img]:h-auto">
                     <div dangerouslySetInnerHTML={{ __html: campaignData.htmlContent || '<p class="text-slate-400 italic">Start typing your email body content...</p>' }} />
                   </div>
                 </div>

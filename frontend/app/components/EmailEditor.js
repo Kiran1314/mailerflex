@@ -103,12 +103,12 @@ export default function EmailEditor({ content, onChange, onAttachmentChange }) {
         </div>
       </div>
 
-      {/* Editable Content Area */}
+      {/* Editable Content Area with 1109px Image Rules */}
       <div
         ref={editorRef}
         contentEditable
         onInput={handleInput}
-        className="p-4 min-h-[180px] max-h-[300px] overflow-y-auto focus:outline-none prose prose-sm max-w-none text-slate-800"
+        className="p-4 min-h-[180px] max-h-[300px] overflow-y-auto focus:outline-none prose prose-sm max-w-none text-slate-800 [&_img]:w-auto [&_img]:max-w-[1109px] [&_img]:h-auto"
         suppressContentEditableWarning={true}
       />
 

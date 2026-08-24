@@ -73,10 +73,13 @@ router.post('/send', async (req, res) => {
       return res.status(400).json({ error: `No contacts found in group "${group}".` });
     }
 
+    const portNum = Number(senderRecord.port) || 465;
+    const isSecure = portNum === 465;
+
     const transporter = nodemailer.createTransport({
       host: senderRecord.host || 'smtp.hostinger.com',
-      port: Number(senderRecord.port) || 587,
-      secure: false,
+      port: portNum,
+      secure: isSecure, // true for 465 (SSL), false for 587 (TLS)
       auth: { user: senderRecord.email, pass: senderRecord.password },
       tls: { rejectUnauthorized: false }
     });
@@ -106,11 +109,12 @@ router.post('/send', async (req, res) => {
     }
 
     let emailPromises = contacts.map(async (contact) => {
+      // Create initial log as 'Sent' or pending dispatch
       const logRecord = await CampaignLog.create({
         campaignTitle: title || subject || 'Untitled Campaign',
         senderEmail: senderRecord.email,
         recipientEmail: contact.email,
-        status: 'Delivered',
+        status: 'Sent',
         opened: false,
         clicked: false,
         unsubscribed: false
@@ -150,7 +154,11 @@ router.post('/send', async (req, res) => {
         if (bcc && bcc.trim() !== '') mailOptions.bcc = bcc.trim();
 
         await transporter.sendMail(mailOptions);
+
+        // Update status to Delivered upon successful SMTP transmission
+        await CampaignLog.findByIdAndUpdate(logRecord._id, { status: 'Delivered' });
       } catch (mailErr) {
+        console.error(`SMTP Dispatch Failed for ${contact.email}:`, mailErr.message);
         await CampaignLog.findByIdAndUpdate(logRecord._id, {
           status: 'Bounced',
           errorDetails: mailErr.message
