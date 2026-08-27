@@ -2,15 +2,75 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
+import { useRouter } from 'next/navigation';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } from 'recharts';
 import Sidebar from './components/Sidebar';
 import EmailEditor from './components/EmailEditor';
-import { Upload, Send, CheckCircle, BellRing, Users, Mail, Layers, FileText, PenTool, AtSign, BarChart3, AlertTriangle, Trash2, Search, ChevronLeft, ChevronRight, Download, RefreshCw, Edit3 } from 'lucide-react';
+import { Upload, Send, CheckCircle, BellRing, Users, Mail, Layers, FileText, PenTool, AtSign, BarChart3, AlertTriangle, Trash2, Search, ChevronLeft, ChevronRight, Download, RefreshCw, Edit3, Menu, X, LogOut } from 'lucide-react';
 
 const CHART_COLORS = ['#3b82f6', '#10b981', '#6366f1', '#f43f5e'];
 
+// Helper for DD/MM/YYYY : HH:MM:SS AM/PM format
+const formatDateTime = (dateInput) => {
+  if (!dateInput) return '-';
+  const d = new Date(dateInput);
+  if (isNaN(d.getTime())) return '-';
+
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+
+  let hours = d.getHours();
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const seconds = String(d.getSeconds()).padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  hours = hours ? hours : 12; // the hour '0' should be '12'
+  const strHours = String(hours).padStart(2, '0');
+
+  return `${day}/${month}/${year} : ${strHours}:${minutes}:${seconds} ${ampm}`;
+};
+
+// Helper for date-only key mapping (YYYY-MM-DD for comparison)
+const getDateKey = (dateInput) => {
+  const d = new Date(dateInput);
+  if (isNaN(d.getTime())) return '';
+  return d.toISOString().split('T')[0];
+};
+
 export default function Dashboard() {
+  const router = useRouter();
+
+  useEffect(() => {
+    const authStatus = localStorage.getItem('isAuthenticated');
+    if (!authStatus) {
+      router.push('/login');
+    }
+  }, [router]);
+
+  const handleLogout = () => {
+    localStorage.removeItem('isAuthenticated');
+    localStorage.removeItem('userEmail');
+    router.push('/login');
+  };
+
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  
+  // Ref for outside click detection on notification popover
+  const notificationRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (notificationRef.current && !notificationRef.current.contains(event.target)) {
+        setIsNotificationsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const [contacts, setContacts] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
   const [templates, setTemplates] = useState([]);
@@ -21,14 +81,18 @@ export default function Dashboard() {
   const [file, setFile] = useState(null);
   const [notification, setNotification] = useState(null);
 
-  // Delivery Date Filter State (Calendar style tabs)
+  // Unread notification counter & sound trigger reference
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const prevLogsCountRef = useRef(0);
+
+  // Delivery Date Filter State
   const [selectedDeliveryDate, setSelectedDeliveryDate] = useState('Today');
 
   // Sending Progress State
   const [isSending, setIsSending] = useState(false);
   const [sendProgress, setSendProgress] = useState({ current: 0, total: 100 });
 
-  // Contact CRUD, Group Tab & Table State
+  // Contact CRUD & Table State
   const [contactForm, setContactForm] = useState({ 
     name: '', email: '', company: '', mobile: '', industry: '', group: 'General' 
   });
@@ -71,17 +135,46 @@ export default function Dashboard() {
   const campaignDataRef = useRef(campaignData);
   campaignDataRef.current = campaignData;
 
+  // Play subtle audio chime for real-time updates
+  const playNotificationChime = () => {
+    try {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5 note
+      osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.15); // A5 note
+      gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.4);
+    } catch (e) {
+      // AudioContext blocked before user interaction or not supported
+    }
+  };
+
   const fetchData = async (isInitial = false) => {
     try {
       const [contactRes, campRes, tempRes, sigRes, senderRes, analyticsRes, groupRes] = await Promise.all([
-        axios.get('http://localhost:5001/api/contacts').catch(() => ({ data: [] })),
-        axios.get('http://localhost:5001/api/campaigns').catch(() => ({ data: [] })),
-        axios.get('http://localhost:5001/api/templates').catch(() => ({ data: [] })),
-        axios.get('http://localhost:5001/api/signatures').catch(() => ({ data: [] })),
-        axios.get('http://localhost:5001/api/senders').catch(() => ({ data: [] })),
-        axios.get('http://localhost:5001/api/analytics').catch(() => ({ data: { summary: {}, dailyTrends: [], logs: [] } })),
-        axios.get('http://localhost:5001/api/contacts/groups').catch(() => ({ data: ['General'] }))
+        axios.get('/api/contacts').catch(() => ({ data: [] })),
+        axios.get('/api/campaigns').catch(() => ({ data: [] })),
+        axios.get('/api/templates').catch(() => ({ data: [] })),
+        axios.get('/api/signatures').catch(() => ({ data: [] })),
+        axios.get('/api/senders').catch(() => ({ data: [] })),
+        axios.get('/api/analytics').catch(() => ({ data: { summary: {}, dailyTrends: [], logs: [] } })),
+        axios.get('/api/contacts/groups').catch(() => ({ data: ['General'] }))
       ]);
+
+      const newLogs = analyticsRes.data?.logs || [];
+      if (!isInitial && newLogs.length > prevLogsCountRef.current) {
+        const diff = newLogs.length - prevLogsCountRef.current;
+        setUnreadNotifications(prev => prev + diff);
+        playNotificationChime();
+        triggerNotification(`New email activity detected (${diff} update${diff > 1 ? 's' : ''})!`);
+      }
+      prevLogsCountRef.current = newLogs.length;
 
       setContacts(contactRes.data || []);
       setCampaigns(campRes.data || []);
@@ -135,7 +228,7 @@ export default function Dashboard() {
     const formData = new FormData();
     formData.append('file', file);
     try {
-      await axios.post('http://localhost:5001/api/contacts/upload', formData);
+      await axios.post('/api/contacts/upload', formData);
       triggerNotification('Contacts successfully imported!');
       setFile(null);
       fetchData(false);
@@ -148,10 +241,10 @@ export default function Dashboard() {
     e.preventDefault();
     try {
       if (editingId) {
-        await axios.put(`http://localhost:5001/api/contacts/${editingId}`, contactForm);
+        await axios.put(`/api/contacts/${editingId}`, contactForm);
         triggerNotification('Contact updated!');
       } else {
-        await axios.post('http://localhost:5001/api/contacts', contactForm);
+        await axios.post('/api/contacts', contactForm);
         triggerNotification('Contact created!');
       }
       setContactForm({ name: '', email: '', company: '', mobile: '', industry: '', group: 'General' });
@@ -164,7 +257,7 @@ export default function Dashboard() {
 
   const handleDeleteContact = async (id) => {
     if (confirm('Delete contact?')) {
-      await axios.delete(`http://localhost:5001/api/contacts/${id}`);
+      await axios.delete(`/api/contacts/${id}`);
       triggerNotification('Contact deleted.');
       fetchData(false);
     }
@@ -174,7 +267,7 @@ export default function Dashboard() {
     if (selectedContactIds.length === 0) return;
     if (confirm(`Are you sure you want to delete ${selectedContactIds.length} contacts?`)) {
       try {
-        await Promise.all(selectedContactIds.map(id => axios.delete(`http://localhost:5001/api/contacts/${id}`)));
+        await Promise.all(selectedContactIds.map(id => axios.delete(`/api/contacts/${id}`)));
         triggerNotification(`${selectedContactIds.length} contacts deleted.`);
         setSelectedContactIds([]);
         fetchData(false);
@@ -225,7 +318,7 @@ export default function Dashboard() {
       `"${l.status || ''}"`,
       l.opened ? 'Yes' : 'No',
       l.unsubscribed ? 'Yes' : 'No',
-      `"${new Date(l.sentAt).toLocaleString()}"`
+      `"${formatDateTime(l.sentAt)}"`
     ]);
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
@@ -270,7 +363,7 @@ export default function Dashboard() {
   const handleSaveSender = async (e) => {
     e.preventDefault();
     try {
-      await axios.post('http://localhost:5001/api/senders', senderForm);
+      await axios.post('/api/senders', senderForm);
       triggerNotification('Sender email saved successfully!');
       setSenderForm({ id: null, email: '', host: 'smtp.hostinger.com', port: 587, password: '' });
       fetchData(false);
@@ -281,7 +374,7 @@ export default function Dashboard() {
 
   const handleDeleteSender = async (id) => {
     if (confirm('Delete this sender email?')) {
-      await axios.delete(`http://localhost:5001/api/senders/${id}`);
+      await axios.delete(`/api/senders/${id}`);
       triggerNotification('Sender deleted.');
       fetchData(false);
     }
@@ -299,7 +392,7 @@ export default function Dashboard() {
     if (sigFile) formData.append('signatureImage', sigFile);
 
     try {
-      const res = await axios.post('http://localhost:5001/api/signatures', formData, {
+      const res = await axios.post('/api/signatures', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       if (res.data && res.data.htmlContent) {
@@ -315,7 +408,7 @@ export default function Dashboard() {
 
   const handleDeleteSignature = async (id) => {
     if (confirm('Delete this signature configuration?')) {
-      await axios.delete(`http://localhost:5001/api/signatures/${id}`);
+      await axios.delete(`/api/signatures/${id}`);
       triggerNotification('Signature deleted.');
       fetchData(false);
     }
@@ -348,7 +441,7 @@ export default function Dashboard() {
 
   const handleSaveTemplate = async (e) => {
     e.preventDefault();
-    await axios.post('http://localhost:5001/api/templates', templateForm);
+    await axios.post('/api/templates', templateForm);
     triggerNotification('Template saved!');
     setTemplateForm({ id: null, title: '', subject: '', htmlContent: '<p>New Template</p>', isDefault: false });
     fetchData(false);
@@ -356,7 +449,7 @@ export default function Dashboard() {
 
   const handleDeleteTemplate = async (id) => {
     if (confirm('Delete template?')) {
-      await axios.delete(`http://localhost:5001/api/templates/${id}`);
+      await axios.delete(`/api/templates/${id}`);
       triggerNotification('Template deleted.');
       fetchData(false);
     }
@@ -420,7 +513,7 @@ export default function Dashboard() {
         });
       }, 350);
 
-      const response = await axios.post('http://localhost:5001/api/campaigns/send', campaignData);
+      const response = await axios.post('/api/campaigns/send', campaignData);
       
       clearInterval(progressInterval);
       setSendProgress({ current: 100, total: 100 });
@@ -441,9 +534,9 @@ export default function Dashboard() {
 
   const pieChartData = useMemo(() => {
     const trends = analytics?.dailyTrends || [];
-    const todayStr = new Date().toLocaleDateString();
-    const activeDate = selectedDeliveryDate === 'Today' ? todayStr : selectedDeliveryDate;
-    const matchedTrend = trends.find(t => t.date === activeDate);
+    const todayKey = getDateKey(new Date());
+    const activeDateKey = selectedDeliveryDate === 'Today' ? todayKey : selectedDeliveryDate;
+    const matchedTrend = trends.find(t => getDateKey(t.date) === activeDateKey || t.date === selectedDeliveryDate);
 
     if (matchedTrend) {
       return [
@@ -463,7 +556,18 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-screen w-full bg-slate-50 overflow-hidden relative">
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+      {/* Mobile Sidebar Overlay Backdrop */}
+      {isMobileSidebarOpen && (
+        <div 
+          onClick={() => setIsMobileSidebarOpen(false)} 
+          className="fixed inset-0 bg-slate-950/50 z-40 lg:hidden backdrop-blur-sm"
+        />
+      )}
+
+      {/* Collapsible Sidebar for Mobile & Tablet */}
+      <div className={`fixed lg:static inset-y-0 left-0 z-50 transform ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 transition-transform duration-300 ease-in-out bg-white`}>
+        <Sidebar activeTab={activeTab} setActiveTab={(tab) => { setActiveTab(tab); setIsMobileSidebarOpen(false); }} />
+      </div>
 
       {/* Sending Progress Overlay */}
       <AnimatePresence>
@@ -508,32 +612,106 @@ export default function Dashboard() {
       </AnimatePresence>
 
       <main className="flex-1 flex flex-col h-full overflow-y-auto">
-        <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between sticky top-0 z-30">
-          <h1 className="text-lg font-bold text-slate-800 capitalize">{activeTab.replace('-', ' ')}</h1>
-          <div className="flex items-center gap-4">
-            <div className="relative bg-slate-100 p-2 rounded-full text-slate-600 hover:bg-slate-200 cursor-pointer">
-              <BellRing size={18} />
-              <span className="absolute top-1 right-1 w-2 h-2 bg-blue-600 rounded-full"></span>
+        <header className="h-16 bg-white border-b border-slate-200 px-4 sm:px-8 flex items-center justify-between sticky top-0 z-30">
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
+              className="lg:hidden p-2 rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition"
+              aria-label="Toggle Menu"
+            >
+              <Menu size={20} />
+            </button>
+            <h1 className="text-base sm:text-lg font-bold text-slate-800 capitalize">{activeTab.replace('-', ' ')}</h1>
+          </div>
+          
+          <div className="flex items-center gap-4 relative">
+            {/* Notification Bell with Outside-Click Closable Popover */}
+            <div className="relative" ref={notificationRef}>
+              <div 
+                onClick={() => {
+                  setIsNotificationsOpen(!isNotificationsOpen);
+                  if (unreadNotifications > 0) setUnreadNotifications(0);
+                }} 
+                className="relative bg-slate-100 p-2.5 rounded-full text-slate-600 hover:bg-slate-200 cursor-pointer transition"
+              >
+                <BellRing size={18} />
+                {unreadNotifications > 0 && (
+                  <span className="absolute -top-1 -right-1 w-5 h-5 bg-rose-600 text-white text-[10px] font-extrabold rounded-full flex items-center justify-center shadow animate-bounce">
+                    {unreadNotifications}
+                  </span>
+                )}
+              </div>
+
+              {/* Notification Popover Dropdown */}
+              <AnimatePresence>
+                {isNotificationsOpen && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    className="absolute right-0 mt-3 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden"
+                  >
+                    <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <BellRing size={16} className="text-blue-400" />
+                        <h4 className="text-xs font-bold uppercase tracking-wider">Live Activity Updates</h4>
+                      </div>
+                      <span className="text-[10px] bg-blue-600 px-2 py-0.5 rounded-full font-semibold">Real-Time</span>
+                    </div>
+
+                    <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
+                      {(analytics?.logs || []).length > 0 ? (
+                        (analytics?.logs || []).slice(0, 10).map((log, lIdx) => (
+                          <div key={lIdx} className="p-3.5 hover:bg-slate-50 transition space-y-1">
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="font-bold text-slate-800 truncate max-w-[180px]">{log.campaignTitle || 'Campaign Update'}</span>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${log.status === 'Delivered' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                {log.status}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500 truncate">To: {log.recipientEmail}</p>
+                            <div className="flex justify-between items-center text-[10px] text-slate-400 pt-1">
+                              <span>{log.opened ? '👁️ Opened' : ''} {log.clicked ? '🖱️ Clicked' : ''}</span>
+                              <span>{formatDateTime(log.sentAt)}</span>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="p-8 text-center text-xs text-slate-400 italic">No recent updates recorded yet.</div>
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
+
+            {/* Logout Button */}
+            <button 
+              onClick={handleLogout}
+              title="Logout"
+              className="bg-rose-50 text-rose-600 hover:bg-rose-100 p-2.5 rounded-full transition flex items-center justify-center cursor-pointer shadow-sm"
+            >
+              <LogOut size={18} />
+            </button>
           </div>
         </header>
 
         <AnimatePresence>
           {notification && (
-            <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="fixed top-20 right-8 z-50 bg-slate-900 text-white px-5 py-3 rounded-xl shadow-xl flex items-center gap-3 text-sm font-medium">
+            <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="fixed top-20 right-4 sm:right-8 z-50 bg-slate-900 text-white px-5 py-3 rounded-xl shadow-xl flex items-center gap-3 text-sm font-medium">
               <CheckCircle size={18} className="text-emerald-400" />
               {notification}
             </motion.div>
           )}
         </AnimatePresence>
 
-        <div className="p-8 max-w-7xl mx-auto w-full">
+        <div className="p-4 sm:p-8 max-w-7xl mx-auto w-full">
           <AnimatePresence mode="wait">
             
             {/* DASHBOARD */}
             {activeTab === 'dashboard' && (
               <motion.div key="dash" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
                   <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
                     <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold"><Users size={22} /></div>
                     <div><p className="text-sm font-medium text-slate-500">Total Contacts</p><h3 className="text-2xl font-bold text-slate-800">{contacts.length}</h3></div>
@@ -565,29 +743,35 @@ export default function Dashboard() {
                         <button onClick={() => setActiveTab('analytics')} className="text-xs font-semibold text-blue-600 hover:underline">View Analytics &rarr;</button>
                       </div>
 
-                      {/* Calendar-Style Date Filter Navigation Bar */}
+                      {/* Calendar-Style Date Filter Navigation Bar (Conditional Yesterday) */}
                       <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-100">
                         {(() => {
                           const trends = analytics?.dailyTrends || [];
-                          const todayStr = new Date().toLocaleDateString();
+                          const todayKey = getDateKey(new Date());
+                          
                           const yesterdayObj = new Date();
                           yesterdayObj.setDate(yesterdayObj.getDate() - 1);
-                          const yesterdayStr = yesterdayObj.toLocaleDateString();
+                          const yesterdayKey = getDateKey(yesterdayObj);
 
-                          const allDates = ['Today', ...trends.map(t => t.date)];
-                          const uniqueDates = Array.from(new Set(allDates));
+                          const hasYesterdayData = trends.some(t => getDateKey(t.date) === yesterdayKey);
+
+                          const dateKeysSet = new Set(['Today']);
+                          if (hasYesterdayData) dateKeysSet.add('Yesterday');
+                          trends.forEach(t => dateKeysSet.add(t.date));
+
+                          const uniqueDates = Array.from(dateKeysSet);
 
                           return uniqueDates.map((dateKey) => {
                             let label = dateKey;
-                            if (dateKey === todayStr) label = 'Today';
-                            else if (dateKey === yesterdayStr) label = 'Yesterday';
+                            if (dateKey === 'Today') label = 'Today';
+                            else if (dateKey === 'Yesterday') label = 'Yesterday';
 
-                            const isSelected = selectedDeliveryDate === dateKey || (dateKey === 'Today' && selectedDeliveryDate === todayStr);
+                            const isSelected = selectedDeliveryDate === dateKey || (dateKey === 'Today' && selectedDeliveryDate === todayKey);
 
                             return (
                               <button
                                 key={dateKey}
-                                onClick={() => setSelectedDeliveryDate(dateKey === 'Today' ? todayStr : dateKey)}
+                                onClick={() => setSelectedDeliveryDate(dateKey === 'Today' ? todayKey : dateKey)}
                                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap ${
                                   isSelected 
                                     ? 'bg-blue-600 text-white shadow-sm' 
@@ -605,9 +789,9 @@ export default function Dashboard() {
                     <div className="space-y-3 pt-2">
                       {(() => {
                         const trends = analytics?.dailyTrends || [];
-                        const todayStr = new Date().toLocaleDateString();
-                        const activeDate = selectedDeliveryDate === 'Today' ? todayStr : selectedDeliveryDate;
-                        const matchedTrend = trends.find(t => t.date === activeDate) || trends[0];
+                        const todayKey = getDateKey(new Date());
+                        const activeKey = selectedDeliveryDate === 'Today' ? todayKey : selectedDeliveryDate;
+                        const matchedTrend = trends.find(t => getDateKey(t.date) === activeKey || t.date === selectedDeliveryDate) || trends[0];
 
                         if (!matchedTrend) {
                           return <p className="text-xs text-slate-400 italic py-6 text-center">No delivery data recorded for this date.</p>;
@@ -702,15 +886,15 @@ export default function Dashboard() {
                   <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                     <h3 className="text-base font-bold text-slate-800">{editingId ? 'Edit Contact' : 'Add Single Contact'}</h3>
                     <form onSubmit={handleSaveContact} className="space-y-3">
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <input type="text" required placeholder="Name" value={contactForm.name} onChange={e => setContactForm({...contactForm, name: e.target.value})} className="border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
                         <input type="email" required placeholder="Email" value={contactForm.email} onChange={e => setContactForm({...contactForm, email: e.target.value})} className="border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <input type="text" placeholder="Company" value={contactForm.company || ''} onChange={e => setContactForm({...contactForm, company: e.target.value})} className="border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
                         <input type="text" placeholder="Mobile" value={contactForm.mobile || ''} onChange={e => setContactForm({...contactForm, mobile: e.target.value})} className="border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <input type="text" placeholder="Industry" value={contactForm.industry || ''} onChange={e => setContactForm({...contactForm, industry: e.target.value})} className="border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
                         <input type="text" placeholder="Group" value={contactForm.group || ''} onChange={e => setContactForm({...contactForm, group: e.target.value})} className="border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
                       </div>
@@ -725,7 +909,7 @@ export default function Dashboard() {
                       
                       <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600 space-y-1 mb-4">
                         <span className="font-bold uppercase text-[10px] text-blue-600 tracking-wider">Required CSV Headers:</span>
-                        <p className="font-mono bg-white p-2 rounded border border-slate-200 text-slate-800">name,email,company,mobile,industry,group</p>
+                        <p className="font-mono bg-white p-2 rounded border border-slate-200 text-slate-800 overflow-x-auto">name,email,company,mobile,industry,group</p>
                       </div>
 
                       <form onSubmit={handleContactUpload} className="space-y-3">
@@ -772,7 +956,7 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  <div className="px-4 flex justify-between items-center">
+                  <div className="px-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                     <h3 className="text-sm font-bold text-slate-800 uppercase">Directory [{selectedGroupTab}] ({filteredContacts.length})</h3>
                     <div className="relative w-full sm:w-72">
                       <Search size={16} className="absolute left-3 top-3 text-slate-400" />
@@ -787,7 +971,7 @@ export default function Dashboard() {
                   </div>
 
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
+                    <table className="w-full text-left border-collapse min-w-[600px]">
                       <thead>
                         <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50/50">
                           <th className="p-4 w-10">
@@ -850,7 +1034,7 @@ export default function Dashboard() {
                     </table>
                   </div>
 
-                  <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+                  <div className="p-4 border-t border-slate-200 bg-slate-50 flex flex-col sm:flex-row items-center justify-between gap-3">
                     <span className="text-xs font-medium text-slate-500">
                       Showing page {currentPage} of {totalPages} ({filteredContacts.length} contacts)
                     </span>
@@ -886,7 +1070,7 @@ export default function Dashboard() {
                         <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Email Address</label>
                         <input type="email" required placeholder="intelligence@ibcstudio.com" value={senderForm.email} onChange={e => setSenderForm({...senderForm, email: e.target.value})} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">SMTP Host</label>
                           <input type="text" required value={senderForm.host} onChange={e => setSenderForm({...senderForm, host: e.target.value})} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
@@ -905,25 +1089,27 @@ export default function Dashboard() {
                   </div>
                   <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col">
                     <div className="p-4 border-b border-slate-200 bg-slate-50"><h3 className="text-sm font-bold text-slate-800 uppercase">Configured Senders</h3></div>
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50">
-                          <th className="p-4">Email ID</th><th className="p-4">Host</th><th className="p-4 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-sm">
-                        {senders.map(s => (
-                          <tr key={s._id} className="hover:bg-slate-50/50">
-                            <td className="p-4 font-medium text-slate-800">{s.email}</td>
-                            <td className="p-4 text-slate-600">{s.host}:{s.port}</td>
-                            <td className="p-4 text-right space-x-2">
-                              <button onClick={() => setSenderForm({ id: s._id, email: s.email, host: s.host, port: s.port, password: s.password })} className="text-blue-600 text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-50">Edit</button>
-                              <button onClick={() => handleDeleteSender(s._id)} className="text-rose-600 text-xs font-semibold px-2.5 py-1 rounded-lg bg-rose-50">Delete</button>
-                            </td>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse min-w-[400px]">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50">
+                            <th className="p-4">Email ID</th><th className="p-4">Host</th><th className="p-4 text-right">Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-sm">
+                          {senders.map(s => (
+                            <tr key={s._id} className="hover:bg-slate-50/50">
+                              <td className="p-4 font-medium text-slate-800">{s.email}</td>
+                              <td className="p-4 text-slate-600">{s.host}:{s.port}</td>
+                              <td className="p-4 text-right space-x-2">
+                                <button onClick={() => setSenderForm({ id: s._id, email: s.email, host: s.host, port: s.port, password: s.password })} className="text-blue-600 text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-50">Edit</button>
+                                <button onClick={() => handleDeleteSender(s._id)} className="text-rose-600 text-xs font-semibold px-2.5 py-1 rounded-lg bg-rose-50">Delete</button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               </motion.div>
@@ -969,7 +1155,7 @@ export default function Dashboard() {
                     <h3 className="text-sm font-bold text-slate-800 uppercase">Created Signatures ({signatures.length})</h3>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
+                    <table className="w-full text-left border-collapse min-w-[500px]">
                       <thead>
                         <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50/50">
                           <th className="p-4">Sender Email ID</th>
@@ -1030,26 +1216,28 @@ export default function Dashboard() {
 
                 <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
                   <div className="p-4 border-b border-slate-200 bg-slate-50"><h3 className="text-sm font-bold text-slate-800 uppercase">Saved Templates</h3></div>
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50">
-                        <th className="p-4">Title</th><th className="p-4">Subject</th><th className="p-4">Default</th><th className="p-4 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-sm">
-                      {templates.map(t => (
-                        <tr key={t._id} className="hover:bg-slate-50/50">
-                          <td className="p-4 font-medium text-slate-800">{t.title}</td>
-                          <td className="p-4 text-slate-600">{t.subject || '-'}</td>
-                          <td className="p-4">{t.isDefault ? <span className="bg-emerald-50 text-emerald-600 text-xs font-semibold px-2 py-0.5 rounded">Default</span> : '-'}</td>
-                          <td className="p-4 text-right space-x-2">
-                            <button onClick={() => setTemplateForm({ id: t._id, title: t.title, subject: t.subject || '', htmlContent: t.htmlContent, isDefault: t.isDefault })} className="text-blue-600 text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-50">Edit</button>
-                            <button onClick={() => handleDeleteTemplate(t._id)} className="text-rose-600 text-xs font-semibold px-2.5 py-1 rounded-lg bg-rose-50">Delete</button>
-                          </td>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[500px]">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50">
+                          <th className="p-4">Title</th><th className="p-4">Subject</th><th className="p-4">Default</th><th className="p-4 text-right">Actions</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-sm">
+                        {templates.map(t => (
+                          <tr key={t._id} className="hover:bg-slate-50/50">
+                            <td className="p-4 font-medium text-slate-800">{t.title}</td>
+                            <td className="p-4 text-slate-600">{t.subject || '-'}</td>
+                            <td className="p-4">{t.isDefault ? <span className="bg-emerald-50 text-emerald-600 text-xs font-semibold px-2 py-0.5 rounded">Default</span> : '-'}</td>
+                            <td className="p-4 text-right space-x-2">
+                              <button onClick={() => setTemplateForm({ id: t._id, title: t.title, subject: t.subject || '', htmlContent: t.htmlContent, isDefault: t.isDefault })} className="text-blue-600 text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-50">Edit</button>
+                              <button onClick={() => handleDeleteTemplate(t._id)} className="text-rose-600 text-xs font-semibold px-2.5 py-1 rounded-lg bg-rose-50">Delete</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -1072,7 +1260,7 @@ export default function Dashboard() {
                       {senders.map(s => <option key={s._id} value={s.email}>{s.email}</option>)}
                     </select>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">CC (Optional)</label>
                       <input type="text" placeholder="cc@example.com" value={campaignData.cc} onChange={e => setCampaignData({...campaignData, cc: e.target.value})} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
@@ -1126,7 +1314,7 @@ export default function Dashboard() {
             {activeTab === 'all-campaigns' && (
               <motion.div key="all-campaigns" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
                 <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-                  <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+                  <div className="p-4 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                     <h3 className="text-sm font-bold text-slate-800 uppercase">Past Campaigns & Recipient Delivery Logs ({campaigns.length})</h3>
                     <button onClick={() => fetchData(false)} className="text-xs font-semibold text-blue-600 hover:underline">Refresh List</button>
                   </div>
@@ -1142,13 +1330,13 @@ export default function Dashboard() {
                                 <h4 className="font-extrabold text-slate-900 text-base">{camp.title || 'Untitled Campaign'}</h4>
                                 <p className="text-xs text-slate-500">Subject: <span className="font-medium text-slate-700">{camp.subject || 'No Subject'}</span></p>
                               </div>
-                              <div className="flex items-center gap-3 text-xs">
+                              <div className="flex items-center gap-2 sm:gap-3 text-xs flex-wrap">
                                 <span className="bg-slate-100 text-slate-700 font-semibold px-3 py-1 rounded-xl">From: {camp.senderEmail}</span>
                                 <span className="bg-blue-50 text-blue-600 font-bold px-3 py-1 rounded-xl">Group: {camp.group}</span>
-                                <span className="bg-emerald-50 text-emerald-600 font-bold px-3 py-1 rounded-xl">{new Date(camp.sentAt).toLocaleString()}</span>
+                                <span className="bg-emerald-50 text-emerald-600 font-bold px-3 py-1 rounded-xl">{formatDateTime(camp.sentAt)}</span>
                                 <button 
                                   onClick={() => handleLoadCampaignForResend(camp)}
-                                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 shadow-sm"
+                                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 shadow-sm ml-auto sm:ml-0"
                                 >
                                   <RefreshCw size={13} /> Edit & Resend
                                 </button>
@@ -1161,7 +1349,7 @@ export default function Dashboard() {
                               </h5>
                               {campaignLogs.length > 0 ? (
                                 <div className="overflow-x-auto">
-                                  <table className="w-full text-left border-collapse text-xs">
+                                  <table className="w-full text-left border-collapse text-xs min-w-[500px]">
                                     <thead>
                                       <tr className="border-b border-slate-200 text-slate-400 font-semibold uppercase">
                                         <th className="py-2 px-3">Recipient Email</th>
@@ -1186,7 +1374,7 @@ export default function Dashboard() {
                                           <td className="py-2.5 px-3">
                                             {log.unsubscribed ? <span className="text-amber-600 font-bold">Yes</span> : <span className="text-slate-400">No</span>}
                                           </td>
-                                          <td className="py-2.5 px-3 text-right text-slate-400">{new Date(log.sentAt).toLocaleTimeString()}</td>
+                                          <td className="py-2.5 px-3 text-right text-slate-400">{formatDateTime(log.sentAt)}</td>
                                         </tr>
                                       ))}
                                     </tbody>
@@ -1210,38 +1398,38 @@ export default function Dashboard() {
             {/* ANALYTICS & LOGS TAB */}
             {activeTab === 'analytics' && (
               <motion.div key="analytics" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                  <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm text-center">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4">
+                  <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm text-center">
                     <p className="text-xs font-bold text-slate-400 uppercase">Delivered</p>
-                    <h2 className="text-2xl font-extrabold text-emerald-600 mt-1">{analytics?.summary?.totalDelivered || 0}</h2>
+                    <h2 className="text-xl sm:text-2xl font-extrabold text-emerald-600 mt-1">{analytics?.summary?.totalDelivered || 0}</h2>
                     <p className="text-[11px] text-slate-500 mt-0.5">{analytics?.summary?.deliveryRate || 0}% Rate</p>
                   </div>
-                  <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm text-center">
+                  <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm text-center">
                     <p className="text-xs font-bold text-slate-400 uppercase">Open Rate</p>
-                    <h2 className="text-2xl font-extrabold text-blue-600 mt-1">{analytics?.summary?.openRate || 0}%</h2>
+                    <h2 className="text-xl sm:text-2xl font-extrabold text-blue-600 mt-1">{analytics?.summary?.openRate || 0}%</h2>
                     <p className="text-[11px] text-slate-500 mt-0.5">{analytics?.summary?.totalOpened || 0} Opens</p>
                   </div>
-                  <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm text-center">
+                  <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm text-center">
                     <p className="text-xs font-bold text-slate-400 uppercase">Click Rate</p>
-                    <h2 className="text-2xl font-extrabold text-indigo-600 mt-1">{analytics?.summary?.clickRate || 0}%</h2>
+                    <h2 className="text-xl sm:text-2xl font-extrabold text-indigo-600 mt-1">{analytics?.summary?.clickRate || 0}%</h2>
                     <p className="text-[11px] text-slate-500 mt-0.5">{analytics?.summary?.totalClicked || 0} Clicks</p>
                   </div>
-                  <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm text-center">
+                  <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm text-center">
                     <p className="text-xs font-bold text-slate-400 uppercase">Unsubscribes</p>
-                    <h2 className="text-2xl font-extrabold text-amber-600 mt-1">{analytics?.summary?.totalUnsubscribed || 0}</h2>
+                    <h2 className="text-xl sm:text-2xl font-extrabold text-amber-600 mt-1">{analytics?.summary?.totalUnsubscribed || 0}</h2>
                     <p className="text-[11px] text-slate-500 mt-0.5">{analytics?.summary?.unsubscribeRate || 0}% Rate</p>
                   </div>
-                  <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm text-center">
+                  <div className="col-span-2 md:col-span-1 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm text-center">
                     <p className="text-xs font-bold text-slate-400 uppercase">Bounced</p>
-                    <h2 className="text-2xl font-extrabold text-rose-600 mt-1">{analytics?.summary?.totalBounced || 0}</h2>
+                    <h2 className="text-xl sm:text-2xl font-extrabold text-rose-600 mt-1">{analytics?.summary?.totalBounced || 0}</h2>
                     <p className="text-[11px] text-slate-500 mt-0.5">Failed Delivery</p>
                   </div>
                 </div>
 
                 <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm space-y-4">
-                  <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+                  <div className="p-4 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                     <h3 className="text-sm font-bold text-slate-800 uppercase">Real-Time Mail Engagement Logs ({(analytics?.logs || []).length})</h3>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 flex-wrap">
                       <button 
                         onClick={handleExportLogsCSV}
                         className="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
@@ -1253,7 +1441,7 @@ export default function Dashboard() {
                   </div>
 
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
+                    <table className="w-full text-left border-collapse min-w-[600px]">
                       <thead>
                         <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50/50">
                           <th className="p-4">Campaign</th>
@@ -1281,7 +1469,7 @@ export default function Dashboard() {
                               <td className="p-4">
                                 {l.unsubscribed ? <span className="bg-amber-50 text-amber-600 text-xs font-bold px-2 py-0.5 rounded">Yes</span> : <span className="text-slate-400 text-xs">No</span>}
                               </td>
-                              <td className="p-4 text-xs text-slate-400 text-right">{new Date(l.sentAt).toLocaleString()}</td>
+                              <td className="p-4 text-xs text-slate-400 text-right">{formatDateTime(l.sentAt)}</td>
                             </tr>
                           ))
                         ) : (
@@ -1293,7 +1481,7 @@ export default function Dashboard() {
                     </table>
                   </div>
 
-                  <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+                  <div className="p-4 border-t border-slate-200 bg-slate-50 flex flex-col sm:flex-row items-center justify-between gap-3">
                     <span className="text-xs font-medium text-slate-500">
                       Showing page {logPage} of {totalLogPages} ({(analytics?.logs || []).length} total logs)
                     </span>
