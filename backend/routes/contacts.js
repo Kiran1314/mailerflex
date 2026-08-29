@@ -143,4 +143,22 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// DELETE all contacts in a specific group (or all contacts if group is 'All')
+router.delete('/group/all', async (req, res) => {
+  try {
+    const { group } = req.query;
+    if (!group || group === 'All') {
+      const result = await Contact.deleteMany({});
+      return res.json({ message: `Successfully deleted all ${result.deletedCount} contacts.` });
+    }
+
+    const result = await Contact.deleteMany({ 
+      group: { $regex: new RegExp(`^${group}$`, 'i') } 
+    });
+    res.json({ message: `Successfully deleted ${result.deletedCount} contacts from group [${group}].` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

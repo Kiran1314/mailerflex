@@ -72,7 +72,8 @@ export default function LoginPage() {
               <input 
                 type="email" 
                 required 
-                placeholder="abhishek.banerjee@ibcstudio.com" 
+                autoComplete="email"
+                placeholder="Enter Email Address" 
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition"

@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
+import authRoutes from './routes/auth.js';
 
 // Import your routes
 import contactRoutes from './routes/contacts.js';
@@ -17,7 +18,7 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
-
+app.use('/api/auth', authRoutes);
 // Serve static signatures folder
 app.use('/signatures', express.static(path.join(process.cwd(), 'signatures')));
 

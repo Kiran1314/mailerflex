@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } from 'recharts';
 import Sidebar from './components/Sidebar';
 import EmailEditor from './components/EmailEditor';
-import { Upload, Send, CheckCircle, BellRing, Users, Mail, Layers, FileText, PenTool, AtSign, BarChart3, AlertTriangle, Trash2, Search, ChevronLeft, ChevronRight, Download, RefreshCw, Edit3, Menu, X, LogOut } from 'lucide-react';
+import { Upload, Send, CheckCircle, BellRing, Users, Mail, Layers, FileText, PenTool, AtSign, BarChart3, AlertTriangle, Trash2, Search, ChevronLeft, ChevronRight, Download, RefreshCw, Edit3, Menu, X, LogOut, RotateCcw } from 'lucide-react';
 
 const CHART_COLORS = ['#3b82f6', '#10b981', '#6366f1', '#f43f5e'];
 
@@ -25,7 +25,7 @@ const formatDateTime = (dateInput) => {
   const seconds = String(d.getSeconds()).padStart(2, '0');
   const ampm = hours >= 12 ? 'PM' : 'AM';
   hours = hours % 12;
-  hours = hours ? hours : 12; // the hour '0' should be '12'
+  hours = hours ? hours : 12; 
   const strHours = String(hours).padStart(2, '0');
 
   return `${day}/${month}/${year} : ${strHours}:${minutes}:${seconds} ${ampm}`;
@@ -142,8 +142,8 @@ export default function Dashboard() {
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5 note
-      osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.15); // A5 note
+      osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); 
+      osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.15); 
       gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
       osc.connect(gain);
@@ -151,7 +151,7 @@ export default function Dashboard() {
       osc.start();
       osc.stop(audioCtx.currentTime + 0.4);
     } catch (e) {
-      // AudioContext blocked before user interaction or not supported
+      // AudioContext blocked
     }
   };
 
@@ -274,6 +274,76 @@ export default function Dashboard() {
       } catch (err) {
         triggerNotification('Failed to execute mass deletion.');
       }
+    }
+  };
+
+  // Bulk Delete Group Contacts via Optimized Backend Route
+  const handleDeleteGroupContacts = async () => {
+    if (selectedGroupTab === 'All') {
+      if (!confirm('Are you sure you want to delete ALL contacts across all groups?')) return;
+    } else {
+      if (!confirm(`Are you sure you want to delete all contacts in group "${selectedGroupTab}"?`)) return;
+    }
+
+    try {
+      const res = await axios.delete(`/api/contacts/group/all?group=${encodeURIComponent(selectedGroupTab)}`);
+      triggerNotification(res.data.message || `Successfully deleted group contacts.`);
+      setSelectedContactIds([]);
+      setSelectedGroupTab('All');
+      fetchData(false);
+    } catch (err) {
+      triggerNotification('Failed to delete group contacts.');
+    }
+  };
+
+  // Resend Campaign Only to Bounced Recipients
+  const handleResendBounced = async (camp) => {
+    const campaignLogs = (analytics?.logs || []).filter(l => l.campaignTitle === camp.title || l.campaignTitle === camp.subject);
+    const bouncedEmails = campaignLogs.filter(l => l.status === 'Bounced' || l.status === 'Failed').map(l => l.recipientEmail);
+
+    if (bouncedEmails.length === 0) {
+      return triggerNotification('No bounced or failed recipient emails found for this campaign to resend.');
+    }
+
+    if (!confirm(`Resend campaign to ${bouncedEmails.length} bounced/failed recipient(s)?`)) return;
+
+    setIsSending(true);
+    setSendProgress({ current: 0, total: 100 });
+
+    try {
+      const progressInterval = setInterval(() => {
+        setSendProgress(prev => {
+          if (prev.current >= 92) {
+            clearInterval(progressInterval);
+            return prev;
+          }
+          return { ...prev, current: prev.current + Math.floor(Math.random() * 12) + 6 };
+        });
+      }, 350);
+
+      const response = await axios.post('/api/campaigns/resend-bounced', {
+        campaignId: camp._id,
+        bouncedEmails,
+        title: camp.title,
+        subject: camp.subject,
+        senderEmail: camp.senderEmail,
+        htmlContent: camp.htmlContent,
+        cc: camp.cc,
+        bcc: camp.bcc
+      });
+
+      clearInterval(progressInterval);
+      setSendProgress({ current: 100, total: 100 });
+
+      setTimeout(() => {
+        setIsSending(false);
+        triggerNotification(response.data.message || 'Bounced emails re-sent successfully!');
+        fetchData(false);
+      }, 800);
+
+    } catch (err) {
+      setIsSending(false);
+      triggerNotification(err.response?.data?.error || 'Failed to resend to bounced contacts.');
     }
   };
 
@@ -938,7 +1008,7 @@ export default function Dashboard() {
                       ))}
                     </div>
 
-                    <div className="flex items-center gap-3 w-full sm:w-auto">
+                    <div className="flex items-center gap-3 w-full sm:w-auto flex-wrap">
                       <button
                         onClick={handleExportCSV}
                         className="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition ml-auto sm:ml-0"
@@ -950,9 +1020,16 @@ export default function Dashboard() {
                           onClick={handleMassDelete}
                           className="bg-rose-50 text-rose-600 hover:bg-rose-100 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
                         >
-                          <Trash2 size={14} /> Delete ({selectedContactIds.length})
+                          <Trash2 size={14} /> Delete Selected ({selectedContactIds.length})
                         </button>
                       )}
+                      {/* Delete All in Group Button */}
+                      <button 
+                        onClick={handleDeleteGroupContacts}
+                        className="bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
+                      >
+                        <Trash2 size={14} /> Delete All in [{selectedGroupTab}]
+                      </button>
                     </div>
                   </div>
 
@@ -1322,6 +1399,7 @@ export default function Dashboard() {
                     {campaigns.length > 0 ? (
                       campaigns.map(camp => {
                         const campaignLogs = (analytics?.logs || []).filter(l => l.campaignTitle === camp.title || l.campaignTitle === camp.subject);
+                        const hasBouncedRecipients = campaignLogs.some(l => l.status === 'Bounced' || l.status === 'Failed');
                         
                         return (
                           <div key={camp._id} className="p-5 space-y-4 hover:bg-slate-50/40 transition">
@@ -1334,9 +1412,21 @@ export default function Dashboard() {
                                 <span className="bg-slate-100 text-slate-700 font-semibold px-3 py-1 rounded-xl">From: {camp.senderEmail}</span>
                                 <span className="bg-blue-50 text-blue-600 font-bold px-3 py-1 rounded-xl">Group: {camp.group}</span>
                                 <span className="bg-emerald-50 text-emerald-600 font-bold px-3 py-1 rounded-xl">{formatDateTime(camp.sentAt)}</span>
+                                
+                                {/* Resend Bounced Only Button */}
+                                {hasBouncedRecipients && (
+                                  <button 
+                                    onClick={() => handleResendBounced(camp)}
+                                    className="bg-amber-500 hover:bg-amber-600 text-white font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 shadow-sm"
+                                    title="Resend email only to contacts whose delivery failed or bounced"
+                                  >
+                                    <RotateCcw size={13} /> Resend Bounced
+                                  </button>
+                                )}
+
                                 <button 
                                   onClick={() => handleLoadCampaignForResend(camp)}
-                                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 shadow-sm ml-auto sm:ml-0"
+                                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 shadow-sm"
                                 >
                                   <RefreshCw size={13} /> Edit & Resend
                                 </button>
