@@ -130,12 +130,12 @@ router.post('/send', async (req, res) => {
 
       personalizedHtml = personalizedHtml.replace(/href="([^"]+)"/g, (m, origUrl) => {
         if (origUrl.includes('/api/analytics')) return m;
-        const clickTrackerUrl = `http://localhost:3000/api/analytics/click?id=${logRecord._id}&url=${encodeURIComponent(origUrl)}`;
+        const clickTrackerUrl = `/api/analytics/click?id=${logRecord._id}&url=${encodeURIComponent(origUrl)}`;
         return `href="${clickTrackerUrl}"`;
       });
 
-      const openTrackerUrl = `http://localhost:3000/api/analytics/open?id=${logRecord._id}`;
-      const unsubscribeUrl = `http://localhost:3000/api/analytics/unsubscribe?id=${logRecord._id}`;
+      const openTrackerUrl = `/api/analytics/open?id=${logRecord._id}`;
+      const unsubscribeUrl = `/api/analytics/unsubscribe?id=${logRecord._id}`;
 
       // Append Open Tracking Pixel & Unsubscribe Footer
       personalizedHtml += `<img src="${openTrackerUrl}" width="1" height="1" style="display:none;" alt="" />`;
