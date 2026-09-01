@@ -47,7 +47,7 @@ export default function EmailEditor({ content, onChange, onAttachmentChange }) {
     const linkText = selectedText || prompt('Enter text for the link:', url) || url;
     
     const aTag = document.createElement('a');
-    aTag.href = url;
+    aTag.href = url; // Directly uses the exact URL entered
     aTag.target = '_blank';
     aTag.rel = 'noopener noreferrer';
     aTag.innerText = linkText;

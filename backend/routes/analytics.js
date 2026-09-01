@@ -26,7 +26,23 @@ router.get('/open/:id', async (req, res) => {
   }
 });
 
-// 2. Track Unsubscribe
+// 2. Track Link Click & Redirect
+router.get('/click', async (req, res) => {
+  try {
+    const { id, url } = req.query;
+    if (id) {
+      await CampaignLog.findByIdAndUpdate(id, { clicked: true });
+    }
+    if (url) {
+      return res.redirect(url);
+    }
+    res.status(400).send('Destination URL not specified.');
+  } catch (err) {
+    res.status(500).send('Error processing click redirection.');
+  }
+});
+
+// 3. Track Unsubscribe
 router.get('/unsubscribe/:id', async (req, res) => {
   try {
     await CampaignLog.findByIdAndUpdate(req.params.id, { unsubscribed: true });
@@ -36,7 +52,7 @@ router.get('/unsubscribe/:id', async (req, res) => {
   }
 });
 
-// 3. Get Real-Time Analytics Summary, Daily Trends & Logs
+// 4. Get Real-Time Analytics Summary, Daily Trends & Logs
 router.get('/', async (req, res) => {
   try {
     const logs = await CampaignLog.find().sort({ sentAt: -1 }).limit(200);
