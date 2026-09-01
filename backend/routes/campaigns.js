@@ -129,13 +129,13 @@ router.post('/send', async (req, res) => {
         .replace(/{{industry}}/g, contact.industry || '');
 
       personalizedHtml = personalizedHtml.replace(/href="([^"]+)"/g, (m, origUrl) => {
-        if (origUrl.includes('/api/analytics')) return m;
-        const clickTrackerUrl = `/api/analytics/click?id=${logRecord._id}&url=${encodeURIComponent(origUrl)}`;
+        if (origUrl.includes('https://mailer.ibcstudio.com/api/analytics')) return m;
+        const clickTrackerUrl = `https://mailer.ibcstudio.com/api/analytics/click?id=${logRecord._id}&url=${encodeURIComponent(origUrl)}`;
         return `href="${clickTrackerUrl}"`;
       });
 
-      const openTrackerUrl = `/api/analytics/open?id=${logRecord._id}`;
-      const unsubscribeUrl = `/api/analytics/unsubscribe?id=${logRecord._id}`;
+      const openTrackerUrl = `https://mailer.ibcstudio.com/api/analytics/open?id=${logRecord._id}`;
+      const unsubscribeUrl = `https://mailer.ibcstudio.com/api/analytics/unsubscribe?id=${logRecord._id}`;
 
       // Append Open Tracking Pixel & Unsubscribe Footer
       personalizedHtml += `<img src="${openTrackerUrl}" width="1" height="1" style="display:none;" alt="" />`;
