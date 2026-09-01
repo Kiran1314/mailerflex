@@ -134,8 +134,9 @@ router.post('/send', async (req, res) => {
         return `href="${clickTrackerUrl}"`;
       });
 
-      const openTrackerUrl = `https://mailer.ibcstudio.com/api/analytics/open?id=${logRecord._id}`;
-      const unsubscribeUrl = `https://mailer.ibcstudio.com/api/analytics/unsubscribe?id=${logRecord._id}`;
+      // Change these two lines:
+      const openTrackerUrl = `https://mailer.ibcstudio.com/api/analytics/open/${logRecord._id}`;
+      const unsubscribeUrl = `https://mailer.ibcstudio.com/api/analytics/unsubscribe/${logRecord._id}`;
 
       // Append Open Tracking Pixel & Unsubscribe Footer
       personalizedHtml += `<img src="${openTrackerUrl}" width="1" height="1" style="display:none;" alt="" />`;
