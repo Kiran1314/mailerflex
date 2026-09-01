@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { Paperclip, X } from 'lucide-react';
+import { Paperclip, X, Link as LinkIcon } from 'lucide-react';
 
 export default function EmailEditor({ content, onChange, onAttachmentChange }) {
   const editorRef = useRef(null);
@@ -23,7 +23,6 @@ export default function EmailEditor({ content, onChange, onAttachmentChange }) {
     const tag = e.target.value;
     if (!tag || !editorRef.current) return;
     
-    // Insert tag at current cursor position or append to editor
     const selection = window.getSelection();
     if (selection.rangeCount > 0 && editorRef.current.contains(selection.getRangeAt(0).commonAncestorContainer)) {
       const range = selection.getRangeAt(0);
@@ -35,6 +34,31 @@ export default function EmailEditor({ content, onChange, onAttachmentChange }) {
     
     onChange(editorRef.current.innerHTML);
     e.target.value = ''; // reset dropdown
+  };
+
+  const handleInsertLink = () => {
+    const url = prompt('Enter external link URL (e.g., https://example.com):', 'https://');
+    if (!url) return;
+
+    const selection = window.getSelection();
+    if (!selection.rangeCount) return;
+    const selectedText = selection.toString();
+
+    const linkText = selectedText || prompt('Enter text for the link:', url) || url;
+    
+    const aTag = document.createElement('a');
+    aTag.href = url;
+    aTag.target = '_blank';
+    aTag.rel = 'noopener noreferrer';
+    aTag.innerText = linkText;
+
+    const range = selection.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(aTag);
+
+    if (editorRef.current) {
+      onChange(editorRef.current.innerHTML);
+    }
   };
 
   const handleFileChange = (e) => {
@@ -52,7 +76,7 @@ export default function EmailEditor({ content, onChange, onAttachmentChange }) {
 
   return (
     <div className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm flex flex-col">
-      {/* Toolbar with Formatting Buttons & Personalization Dropdown */}
+      {/* Toolbar with Formatting Buttons, Link Tool & Personalization Dropdown */}
       <div className="bg-slate-50 border-b border-slate-200 px-3 py-2 flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-1.5 flex-wrap">
           <div className="flex items-center gap-1">
@@ -76,6 +100,14 @@ export default function EmailEditor({ content, onChange, onAttachmentChange }) {
               className="px-2.5 py-1 text-xs underline bg-white border border-slate-200 rounded hover:bg-slate-100"
             >
               U
+            </button>
+            <button 
+              type="button" 
+              onClick={handleInsertLink} 
+              title="Insert Multiple External Links"
+              className="px-2.5 py-1 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 flex items-center gap-1 text-blue-600 font-semibold"
+            >
+              <LinkIcon size={12} /> Link
             </button>
           </div>
 

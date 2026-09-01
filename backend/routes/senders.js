@@ -1,31 +1,27 @@
 import express from 'express';
-import mongoose from 'mongoose';
+import Sender from '../models/Sender.js';
 
 const router = express.Router();
 
-const SenderSchema = new mongoose.Schema({
-  email: { type: String, required: true, unique: true },
-  host: { type: String, default: 'smtp.hostinger.com' },
-  port: { type: Number, default: 587 },
-  password: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now }
-});
-
-const Sender = mongoose.models.Sender || mongoose.model('Sender', SenderSchema);
-
-// CREATE or UPDATE Sender Email
 router.post('/', async (req, res) => {
   try {
-    const { id, email, host, port, password } = req.body;
+    const { id, email, host, port, password, incomingHost, incomingPort, incomingProtocol } = req.body;
+    const updatePayload = { 
+      email, 
+      host: host || 'smtp.hostinger.com', 
+      port: Number(port) || 465, 
+      password,
+      incomingHost: incomingHost || 'pop.hostinger.com',
+      incomingPort: Number(incomingPort) || 995,
+      incomingProtocol: incomingProtocol || 'POP3'
+    };
+
     if (id) {
-      const updated = await Sender.findByIdAndUpdate(
-        id,
-        { email, host, port, password },
-        { new: true }
-      );
+      const updated = await Sender.findByIdAndUpdate(id, updatePayload, { returnDocument: 'after' });
       return res.json(updated);
     }
-    const newSender = new Sender({ email, host, port, password });
+    
+    const newSender = new Sender(updatePayload);
     await newSender.save();
     res.status(201).json(newSender);
   } catch (err) {
@@ -33,7 +29,6 @@ router.post('/', async (req, res) => {
   }
 });
 
-// READ All Senders
 router.get('/', async (req, res) => {
   try {
     const senders = await Sender.find().sort({ createdAt: -1 });
@@ -43,7 +38,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// DELETE Sender
 router.delete('/:id', async (req, res) => {
   try {
     await Sender.findByIdAndDelete(req.params.id);

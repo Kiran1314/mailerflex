@@ -9,9 +9,10 @@ import authRoutes from './routes/auth.js';
 import contactRoutes from './routes/contacts.js';
 import campaignRoutes from './routes/campaigns.js';
 import templateRoutes from './routes/templates.js';
-import signatureRoutes from './routes/signatures.js';
-import senderRoutes from './routes/senders.js';
+import signatureRoutes from './routes/signatures.js'; 
 import analyticsRoutes from './routes/analytics.js';
+import webmailRoutes from './routes/webmail.js';
+import senderRoutes from './routes/senders.js';
 
 dotenv.config();
 const app = express();
@@ -29,6 +30,7 @@ app.use('/api/templates', templateRoutes);
 app.use('/api/signatures', signatureRoutes);
 app.use('/api/senders', senderRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/webmail', webmailRoutes);
 
 const PORT = process.env.PORT || 5001;
 mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mailer-saas')

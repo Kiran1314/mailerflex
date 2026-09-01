@@ -6,7 +6,11 @@ import { useRouter } from 'next/navigation';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } from 'recharts';
 import Sidebar from './components/Sidebar';
 import EmailEditor from './components/EmailEditor';
-import { Upload, Send, CheckCircle, BellRing, Users, Mail, Layers, FileText, PenTool, AtSign, BarChart3, AlertTriangle, Trash2, Search, ChevronLeft, ChevronRight, Download, RefreshCw, Edit3, Menu, X, LogOut, RotateCcw } from 'lucide-react';
+import { 
+  Upload, Send, CheckCircle, BellRing, Users, Mail, Layers, FileText, 
+  PenTool, AtSign, BarChart3, AlertTriangle, Trash2, Search, ChevronLeft, 
+  ChevronRight, Download, RefreshCw, Edit3, Menu, X, LogOut, RotateCcw, Tag, Eye, MousePointer, Save 
+} from 'lucide-react';
 
 const CHART_COLORS = ['#3b82f6', '#10b981', '#6366f1', '#f43f5e'];
 
@@ -55,9 +59,17 @@ export default function Dashboard() {
   };
 
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [selectedWebmailSender, setSelectedWebmailSender] = useState('');
+  const [activeFolder, setActiveFolder] = useState('inbox');
+  const [webmailMessages, setWebmailMessages] = useState([]);
+  const [unreadWebmailCount, setUnreadWebmailCount] = useState(0);
+
+  // Individual Email Composer State (including draftId support)
+  const [composeForm, setComposeForm] = useState({ draftId: null, to: '', subject: '', cc: '', bcc: '', bodyHtml: '' });
+
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-  
+   
   // Ref for outside click detection on notification popover
   const notificationRef = useRef(null);
 
@@ -70,6 +82,21 @@ export default function Dashboard() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Live Webmail Polling Effect
+  useEffect(() => {
+    if (activeTab === 'webmail' && selectedWebmailSender) {
+      const webmailPoll = setInterval(() => {
+        axios.get(`/api/webmail/${selectedWebmailSender}/${activeFolder}`)
+          .then(res => {
+            setWebmailMessages(res.data.messages || []);
+            setUnreadWebmailCount(res.data.unreadCount || 0);
+          })
+          .catch(() => {});
+      }, 5000);
+      return () => clearInterval(webmailPoll);
+    }
+  }, [activeTab, selectedWebmailSender, activeFolder]);
 
   const [contacts, setContacts] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
@@ -107,8 +134,17 @@ export default function Dashboard() {
   const [logPage, setLogPage] = useState(1);
   const logsPerPage = 8;
 
-  // Sender Email Form State
-  const [senderForm, setSenderForm] = useState({ id: null, email: '', host: 'smtp.hostinger.com', port: 587, password: '' });
+  // Sender Form State
+  const [senderForm, setSenderForm] = useState({ 
+    id: null, 
+    email: '', 
+    host: 'smtp.hostinger.com', 
+    port: 465, 
+    password: 'Buchunku@2411#',
+    incomingHost: 'pop.hostinger.com',
+    incomingPort: 995,
+    incomingProtocol: 'POP3'
+  });
 
   // Template Manager State
   const [templateForm, setTemplateForm] = useState({
@@ -200,6 +236,11 @@ export default function Dashboard() {
           const currSig = (sigRes.data || []).find(s => s.emailId === defaultEmail);
           if (currSig) setSignatureHtml(currSig.htmlContent);
         }
+        // IMPORTANT: Only set selectedWebmailSender on initial load if empty!
+        if (isInitial && !selectedWebmailSender) {
+          setSelectedWebmailSender(defaultEmail);
+        }
+      
       }
     } catch (err) {
       console.error('Backend connection error', err);
@@ -216,6 +257,87 @@ export default function Dashboard() {
     }, 5000);
     return () => clearInterval(pollInterval);
   }, []);
+
+  // Fetch webmail messages whenever active webmail sender or folder changes
+  useEffect(() => {
+    if (selectedWebmailSender) {
+      axios.get(`/api/webmail/${selectedWebmailSender}/${activeFolder}`)
+        .then(res => {
+          setWebmailMessages(res.data.messages || []);
+          setUnreadWebmailCount(res.data.unreadCount || 0);
+        })
+        .catch(() => setWebmailMessages([]));
+    }
+  }, [selectedWebmailSender, activeFolder]);
+
+  // Handle Individual Email Send with Signature & Personalization Tags
+  const handleSendIndividualEmail = async (e) => {
+    e.preventDefault();
+    try {
+      const sigRecord = signatures.find(s => s.emailId === selectedWebmailSender);
+      const fullBody = composeForm.bodyHtml + (sigRecord ? `<br><br>${sigRecord.htmlContent}` : '');
+
+      await axios.post('/api/webmail/send-individual', {
+        senderEmail: selectedWebmailSender,
+        to: composeForm.to,
+        subject: composeForm.subject,
+        bodyHtml: fullBody,
+        cc: composeForm.cc,
+        bcc: composeForm.bcc
+      });
+
+      // If this was sent from a draft, delete the draft record permanently
+      if (composeForm.draftId) {
+        await axios.delete(`/api/webmail/message/${composeForm.draftId}`).catch(() => {});
+      }
+
+      triggerNotification('Individual email sent successfully!');
+      setComposeForm({ draftId: null, to: '', subject: '', cc: '', bcc: '', bodyHtml: '' });
+      setActiveFolder('sent');
+      setActiveTab('webmail');
+    } catch (err) {
+      triggerNotification('Failed to dispatch individual email.');
+    }
+  };
+
+  // Save Email as Draft Handler
+  const handleSaveAsDraft = async () => {
+    if (!composeForm.to && !composeForm.subject && !composeForm.bodyHtml) {
+      return triggerNotification('Draft is empty.');
+    }
+    try {
+      const res = await axios.post('/api/webmail/save-draft', {
+        id: composeForm.draftId,
+        senderEmail: selectedWebmailSender,
+        to: composeForm.to,
+        subject: composeForm.subject,
+        bodyHtml: composeForm.bodyHtml,
+        cc: composeForm.cc,
+        bcc: composeForm.bcc
+      });
+      if (res.data.draft && !composeForm.draftId) {
+        setComposeForm(prev => ({ ...prev, draftId: res.data.draft._id }));
+      }
+      triggerNotification('Email saved to Drafts!');
+    } catch (err) {
+      triggerNotification('Failed to save draft.');
+    }
+  };
+
+  const insertPersonalizationTag = (tag) => {
+    setComposeForm(prev => ({ ...prev, bodyHtml: prev.bodyHtml + ` ${tag} ` }));
+  };
+
+  // Lead Stage Updater
+  const handleUpdateLeadStage = async (msgId, newStage) => {
+    try {
+      await axios.patch(`/api/webmail/message/${msgId}`, { leadStage: newStage });
+      setWebmailMessages(prev => prev.map(m => m._id === msgId ? { ...m, leadStage: newStage } : m));
+      triggerNotification(`Lead stage updated to ${newStage}`);
+    } catch (err) {
+      triggerNotification('Failed to update lead stage.');
+    }
+  };
 
   const triggerNotification = (msg) => {
     setNotification(msg);
@@ -434,8 +556,17 @@ export default function Dashboard() {
     e.preventDefault();
     try {
       await axios.post('/api/senders', senderForm);
-      triggerNotification('Sender email saved successfully!');
-      setSenderForm({ id: null, email: '', host: 'smtp.hostinger.com', port: 587, password: '' });
+      triggerNotification('Sender email and server settings saved successfully!');
+      setSenderForm({ 
+        id: null, 
+        email: '', 
+        host: 'smtp.hostinger.com', 
+        port: 465, 
+        password: 'Buchunku@2411#',
+        incomingHost: 'pop.hostinger.com',
+        incomingPort: 995,
+        incomingProtocol: 'POP3'
+      });
       fetchData(false);
     } catch (err) {
       triggerNotification('Failed to save sender email.');
@@ -584,7 +715,7 @@ export default function Dashboard() {
       }, 350);
 
       const response = await axios.post('/api/campaigns/send', campaignData);
-      
+       
       clearInterval(progressInterval);
       setSendProgress({ current: 100, total: 100 });
 
@@ -636,7 +767,16 @@ export default function Dashboard() {
 
       {/* Collapsible Sidebar for Mobile & Tablet */}
       <div className={`fixed lg:static inset-y-0 left-0 z-50 transform ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 transition-transform duration-300 ease-in-out bg-white`}>
-        <Sidebar activeTab={activeTab} setActiveTab={(tab) => { setActiveTab(tab); setIsMobileSidebarOpen(false); }} />
+        <Sidebar 
+          activeTab={activeTab} 
+          setActiveTab={(tab) => { setActiveTab(tab); setIsMobileSidebarOpen(false); }} 
+          senders={senders}
+          selectedWebmailSender={selectedWebmailSender}
+          setSelectedWebmailSender={setSelectedWebmailSender}
+          activeFolder={activeFolder}
+          setActiveFolder={setActiveFolder}
+          unreadWebmailCount={unreadWebmailCount}
+        />
       </div>
 
       {/* Sending Progress Overlay */}
@@ -693,7 +833,7 @@ export default function Dashboard() {
             </button>
             <h1 className="text-base sm:text-lg font-bold text-slate-800 capitalize">{activeTab.replace('-', ' ')}</h1>
           </div>
-          
+           
           <div className="flex items-center gap-4 relative">
             {/* Notification Bell with Outside-Click Closable Popover */}
             <div className="relative" ref={notificationRef}>
@@ -778,25 +918,200 @@ export default function Dashboard() {
         <div className="p-4 sm:p-8 max-w-7xl mx-auto w-full">
           <AnimatePresence mode="wait">
             
+           {/* WEBMAIL & CRM LEADS STAGES TAB */}
+              {activeTab === 'webmail' && (
+                <motion.div key="webmail" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
+                  <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-200">
+                    <div className="flex items-center gap-3">
+                      <h3 className="font-bold text-slate-800 uppercase text-sm">Webmail [{selectedWebmailSender}] &rarr; {activeFolder.toUpperCase()}</h3>
+                      <span className="text-xs bg-slate-100 text-slate-600 px-2.5 py-0.5 rounded-full font-semibold">{webmailMessages.length} Messages</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => {
+                        if (selectedWebmailSender) {
+                          axios.get(`/api/webmail/${selectedWebmailSender}/${activeFolder}`)
+                            .then(res => { setWebmailMessages(res.data.messages || []); setUnreadWebmailCount(res.data.unreadCount || 0); triggerNotification('Inbox synchronized.'); });
+                        }
+                      }} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"><RefreshCw size={14}/> Sync Live</button>
+                      <button onClick={() => { setComposeForm({ draftId: null, to: '', subject: '', cc: '', bcc: '', bodyHtml: '' }); setActiveTab('compose-individual'); }} className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2"><PenTool size={14} /> Compose Email</button>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+                    <table className="w-full text-left border-collapse min-w-[700px]">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 bg-slate-50 uppercase">
+                          <th className="p-4">From / To</th>
+                          <th className="p-4">Subject</th>
+                          <th className="p-4">Lead Stage (CRM Pipeline)</th>
+                          <th className="p-4">Timestamp</th>
+                          <th className="p-4 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-sm">
+                        {webmailMessages.length > 0 ? webmailMessages.map(msg => (
+                          <tr key={msg._id} className="hover:bg-slate-50">
+                            <td className="p-4 font-medium text-slate-800">{activeFolder === 'sent' ? `To: ${msg.to}` : msg.from}</td>
+                            <td className="p-4 text-slate-600">{msg.subject || '(No Subject)'}</td>
+                            <td className="p-4">
+                              <select 
+                                value={msg.leadStage} 
+                                onChange={(e) => handleUpdateLeadStage(msg._id, e.target.value)}
+                                className="border border-slate-200 rounded-lg p-1.5 text-xs bg-blue-50 text-blue-700 font-semibold"
+                              >
+                                <option value="New Lead">New Lead</option>
+                                <option value="Contacted">Contacted</option>
+                                <option value="Warm Prospect">Warm Prospect</option>
+                                <option value="Negotiation">Negotiation</option>
+                                <option value="Converted">Converted</option>
+                                <option value="Closed/Junk">Closed/Junk</option>
+                              </select>
+                            </td>
+                            <td className="p-4 text-xs text-slate-400">{formatDateTime(msg.date)}</td>
+                            <td className="p-4 text-right space-x-2">
+                              {/* If in Drafts folder, allow Reverting / Editing back to Composer */}
+                              {activeFolder === 'drafts' && (
+                                <button 
+                                  onClick={() => {
+                                    setComposeForm({
+                                      draftId: msg._id,
+                                      to: msg.to || '',
+                                      subject: msg.subject || '',
+                                      cc: msg.cc || '',
+                                      bcc: msg.bcc || '',
+                                      bodyHtml: msg.bodyHtml || ''
+                                    });
+                                    setActiveTab('compose-individual');
+                                  }}
+                                  className="text-blue-600 bg-blue-50 hover:bg-blue-100 text-xs font-semibold px-2.5 py-1 rounded-lg transition"
+                                >
+                                  Edit / Revert
+                                </button>
+                              )}
+
+                              {/* If in Drafts, allow sending directly from draft item */}
+                              {activeFolder === 'drafts' && (
+                                <button 
+                                  onClick={async () => {
+                                    setSelectedWebmailSender(msg.senderEmailId);
+                                    setComposeForm({
+                                      draftId: msg._id,
+                                      to: msg.to,
+                                      subject: msg.subject,
+                                      cc: msg.cc || '',
+                                      bcc: msg.bcc || '',
+                                      bodyHtml: msg.bodyHtml
+                                    });
+                                    setActiveTab('compose-individual');
+                                  }}
+                                  className="text-white bg-emerald-600 hover:bg-emerald-700 text-xs font-semibold px-2.5 py-1 rounded-lg transition"
+                                >
+                                  Send
+                                </button>
+                              )}
+
+                              {activeFolder !== 'deleted' ? (
+                                <button 
+                                  onClick={async () => {
+                                    await axios.patch(`/api/webmail/message/${msg._id}`, { folder: 'deleted' });
+                                    setWebmailMessages(prev => prev.filter(m => m._id !== msg._id));
+                                    triggerNotification('Moved to Deleted Items.');
+                                  }} 
+                                  className="text-rose-600 bg-rose-50 hover:bg-rose-100 text-xs font-semibold px-2.5 py-1 rounded-lg transition"
+                                >
+                                  Delete
+                                </button>
+                              ) : (
+                                <button 
+                                  onClick={async () => {
+                                    if (!confirm('Permanently delete this email?')) return;
+                                    await axios.delete(`/api/webmail/message/${msg._id}`);
+                                    setWebmailMessages(prev => prev.filter(m => m._id !== msg._id));
+                                    triggerNotification('Permanently deleted.');
+                                  }} 
+                                  className="text-white bg-rose-600 hover:bg-rose-700 text-xs font-semibold px-2.5 py-1 rounded-lg transition"
+                                >
+                                  Delete Permanently
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        )) : (
+                          <tr><td colSpan="5" className="p-8 text-center text-slate-400 italic">No messages found in this folder.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </motion.div>
+              )}
+
+            {/* COMPOSE INDIVIDUAL EMAIL UNDER SENDER WITH SIGNATURES, TAGS & SAVE TO DRAFT */}
+            {activeTab === 'compose-individual' && (
+              <motion.div key="compose-individual" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                  <div className="flex justify-between items-center">
+                    <h3 className="text-base font-bold text-slate-800">Compose Email ({selectedWebmailSender})</h3>
+                    <button 
+                      type="button" 
+                      onClick={handleSaveAsDraft}
+                      className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+                    >
+                      <Save size={14} /> Save as Draft
+                    </button>
+                  </div>
+                   
+                  {/* Personalization Dropdown Tag Bar */}
+                  <div className="flex gap-2 flex-wrap bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
+                    <span className="font-bold text-slate-600 flex items-center gap-1"><Tag size={12}/> Insert Tag:</span>
+                    {['{{name}}', '{{email}}', '{{company}}', '{{mobile}}'].map(tag => (
+                      <button key={tag} type="button" onClick={() => insertPersonalizationTag(tag)} className="bg-white border border-slate-200 px-2.5 py-1 rounded-lg font-mono text-blue-600 hover:bg-blue-50">{tag}</button>
+                    ))}
+                  </div>
+
+                  <form onSubmit={handleSendIndividualEmail} className="space-y-3">
+                    <input type="email" required placeholder="Recipient (To:)" value={composeForm.to} onChange={e => setComposeForm({...composeForm, to: e.target.value})} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
+                    <input type="text" placeholder="Subject" value={composeForm.subject} onChange={e => setComposeForm({...composeForm, subject: e.target.value})} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
+                    <EmailEditor content={composeForm.bodyHtml} onChange={html => setComposeForm({...composeForm, bodyHtml: html})} />
+                    <button type="submit" className="w-full bg-blue-600 text-white py-3 rounded-xl text-sm font-semibold hover:bg-blue-700 transition">Send Individual Email</button>
+                  </form>
+                </div>
+
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
+                  <h3 className="text-base font-bold text-slate-800 mb-4">Live Preview (Includes Auto-Appended Signature)</h3>
+                  <div className="flex-1 border border-slate-200 rounded-xl p-6 bg-slate-50 overflow-auto prose prose-sm max-w-none">
+                    <div dangerouslySetInnerHTML={{ __html: composeForm.bodyHtml + (signatures.find(s => s.emailId === selectedWebmailSender)?.htmlContent || '') }} />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
             {/* DASHBOARD */}
             {activeTab === 'dashboard' && (
               <motion.div key="dash" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold"><Users size={22} /></div>
-                    <div><p className="text-sm font-medium text-slate-500">Total Contacts</p><h3 className="text-2xl font-bold text-slate-800">{contacts.length}</h3></div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
+                  <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold"><Users size={18} /></div>
+                    <div><p className="text-xs font-medium text-slate-500">Contacts</p><h3 className="text-xl font-bold text-slate-800">{contacts.length}</h3></div>
                   </div>
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold"><Send size={22} /></div>
-                    <div><p className="text-sm font-medium text-slate-500">Total Sent</p><h3 className="text-2xl font-bold text-slate-800">{analytics?.summary?.totalSent || 0}</h3></div>
+                  <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold"><Send size={18} /></div>
+                    <div><p className="text-xs font-medium text-slate-500">Sent</p><h3 className="text-xl font-bold text-slate-800">{analytics?.summary?.totalSent || 0}</h3></div>
                   </div>
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold"><CheckCircle size={22} /></div>
-                    <div><p className="text-sm font-medium text-slate-500">Delivered Rate</p><h3 className="text-2xl font-bold text-emerald-600">{analytics?.summary?.deliveryRate || 0}%</h3></div>
+                  <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold"><Eye size={18} /></div>
+                    <div><p className="text-xs font-medium text-slate-500">Opens</p><h3 className="text-xl font-bold text-blue-600">{analytics?.summary?.totalOpened || 0}</h3></div>
                   </div>
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold"><AlertTriangle size={22} /></div>
-                    <div><p className="text-sm font-medium text-slate-500">Bounced</p><h3 className="text-2xl font-bold text-rose-600">{analytics?.summary?.totalBounced || 0}</h3></div>
+                  <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold"><MousePointer size={18} /></div>
+                    <div><p className="text-xs font-medium text-slate-500">Clicks</p><h3 className="text-xl font-bold text-indigo-600">{analytics?.summary?.totalClicked || 0}</h3></div>
+                  </div>
+                  <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold"><CheckCircle size={18} /></div>
+                    <div><p className="text-xs font-medium text-slate-500">Delivered</p><h3 className="text-xl font-bold text-emerald-600">{analytics?.summary?.deliveryRate || 0}%</h3></div>
+                  </div>
+                  <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold"><AlertTriangle size={18} /></div>
+                    <div><p className="text-xs font-medium text-slate-500">Bounced</p><h3 className="text-xl font-bold text-rose-600">{analytics?.summary?.totalBounced || 0}</h3></div>
                   </div>
                 </div>
 
@@ -1136,50 +1451,73 @@ export default function Dashboard() {
               </motion.div>
             )}
 
-            {/* SENDER EMAILS MANAGER */}
+            {/* SENDER EMAILS MANAGER WITH INCOMING & OUTGOING SERVER DETAILS */}
             {activeTab === 'senders-mgr' && (
               <motion.div key="senders-mgr" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                    <h3 className="text-base font-bold text-slate-800">{senderForm.id ? 'Edit Sender Email' : 'Add New Sender Email'}</h3>
+                    <h3 className="text-base font-bold text-slate-800">{senderForm.id ? 'Edit Sender & Server Settings' : 'Add New Sender & Server Details'}</h3>
                     <form onSubmit={handleSaveSender} className="space-y-3">
                       <div>
                         <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Email Address</label>
                         <input type="email" required placeholder="intelligence@ibcstudio.com" value={senderForm.email} onChange={e => setSenderForm({...senderForm, email: e.target.value})} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">SMTP Host</label>
-                          <input type="text" required value={senderForm.host} onChange={e => setSenderForm({...senderForm, host: e.target.value})} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">SMTP Port</label>
-                          <input type="number" required value={senderForm.port} onChange={e => setSenderForm({...senderForm, port: e.target.value})} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
+                       
+                      <div className="pt-2 border-t border-slate-100">
+                        <p className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-2">Outgoing Server Settings (SMTP)</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">SMTP Host</label>
+                            <input type="text" required value={senderForm.host} onChange={e => setSenderForm({...senderForm, host: e.target.value})} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">SMTP Port</label>
+                            <input type="number" required value={senderForm.port} onChange={e => setSenderForm({...senderForm, port: e.target.value})} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
+                          </div>
                         </div>
                       </div>
+
+                      <div className="pt-2 border-t border-slate-100">
+                        <p className="text-xs font-bold text-indigo-600 uppercase tracking-wider mb-2">Incoming Server Settings (POP3)</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Incoming Host</label>
+                            <input type="text" value={senderForm.incomingHost} onChange={e => setSenderForm({...senderForm, incomingHost: e.target.value})} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Port</label>
+                            <input type="number" value={senderForm.incomingPort} onChange={e => setSenderForm({...senderForm, incomingPort: e.target.value})} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
+                          </div>
+                        </div>
+                      </div>
+
                       <div>
-                        <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">SMTP Password</label>
+                        <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Password / App Password</label>
                         <input type="password" required autoComplete="current-password" placeholder="Password" value={senderForm.password} onChange={e => setSenderForm({...senderForm, password: e.target.value})} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
                       </div>
-                      <button type="submit" className="w-full bg-blue-600 text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 transition">{senderForm.id ? 'Update Sender' : 'Save Sender'}</button>
+
+                      <button type="submit" className="w-full bg-blue-600 text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 transition">{senderForm.id ? 'Update Sender Server Config' : 'Save Sender & Server Config'}</button>
                     </form>
                   </div>
                   <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col">
-                    <div className="p-4 border-b border-slate-200 bg-slate-50"><h3 className="text-sm font-bold text-slate-800 uppercase">Configured Senders</h3></div>
+                    <div className="p-4 border-b border-slate-200 bg-slate-50"><h3 className="text-sm font-bold text-slate-800 uppercase">Configured Senders & Server Nodes</h3></div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-left border-collapse min-w-[400px]">
                         <thead>
                           <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50">
-                            <th className="p-4">Email ID</th><th className="p-4">Host</th><th className="p-4 text-right">Actions</th>
+                            <th className="p-4">Email ID</th><th className="p-4">Outgoing / Incoming Host</th><th className="p-4 text-right">Actions</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-sm">
                           {senders.map(s => (
                             <tr key={s._id} className="hover:bg-slate-50/50">
                               <td className="p-4 font-medium text-slate-800">{s.email}</td>
-                              <td className="p-4 text-slate-600">{s.host}:{s.port}</td>
+                              <td className="p-4 text-xs text-slate-600">
+                                <div>SMTP: {s.host}:{s.port}</div>
+                                <div className="text-indigo-600">POP3: {s.incomingHost || 'pop.hostinger.com'}:{s.incomingPort || 995}</div>
+                              </td>
                               <td className="p-4 text-right space-x-2">
-                                <button onClick={() => setSenderForm({ id: s._id, email: s.email, host: s.host, port: s.port, password: s.password })} className="text-blue-600 text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-50">Edit</button>
+                                <button onClick={() => setSenderForm({ id: s._id, email: s.email, host: s.host, port: s.port, password: s.password, incomingHost: s.incomingHost || 'pop.hostinger.com', incomingPort: s.incomingPort || 995, incomingProtocol: s.incomingProtocol || 'POP3' })} className="text-blue-600 text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-50">Edit</button>
                                 <button onClick={() => handleDeleteSender(s._id)} className="text-rose-600 text-xs font-semibold px-2.5 py-1 rounded-lg bg-rose-50">Delete</button>
                               </td>
                             </tr>
