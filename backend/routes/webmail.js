@@ -87,23 +87,32 @@ router.post('/send-individual', async (req, res) => {
   }
 });
 
-// 3. UPDATE FOLDER (MOVE TO TRASH), READ STATUS, OR CRM LEAD STAGE
+// 3. UPDATE / PATCH MESSAGE (Lead Stage, Read status, Flag, Pin, Folder movement)
 router.patch('/message/:id', async (req, res) => {
   try {
-    const { folder, isRead, leadStage } = req.body;
-    const updateData = {};
-    if (folder) updateData.folder = folder;
-    if (typeof isRead === 'boolean') updateData.isRead = isRead;
-    if (leadStage) updateData.leadStage = leadStage;
+    const { folder, isRead, leadStage, isFlagged, isPinned } = req.body;
+    const updatePayload = {};
+
+    if (folder !== undefined) updatePayload.folder = folder;
+    if (isRead !== undefined) updatePayload.isRead = isRead;
+    if (leadStage !== undefined) updatePayload.leadStage = leadStage;
+    if (isFlagged !== undefined) updatePayload.isFlagged = isFlagged;
+    if (isPinned !== undefined) updatePayload.isPinned = isPinned;
 
     const updated = await EmailMessage.findByIdAndUpdate(
       req.params.id, 
-      updateData, 
-      { returnDocument: 'after' }
+      { $set: updatePayload }, 
+      { new: true }
     );
+    
+    if (!updated) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
     res.json(updated);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    console.error('Backend Patch Error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

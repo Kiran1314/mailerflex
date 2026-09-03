@@ -9,7 +9,7 @@ import EmailEditor from './components/EmailEditor';
 import { 
   Upload, Send, CheckCircle, BellRing, Users, Mail, Layers, FileText, 
   PenTool, AtSign, BarChart3, AlertTriangle, Trash2, Search, ChevronLeft, 
-  ChevronRight, Download, RefreshCw, Edit3, Menu, X, LogOut, RotateCcw, Tag, Eye, MousePointer, Save 
+  ChevronRight, Download, RefreshCw, Edit3, Menu, X, LogOut, RotateCcw, Tag, Eye, MousePointer, Save, Reply, Forward 
 } from 'lucide-react';
 
 const CHART_COLORS = ['#3b82f6', '#10b981', '#6366f1', '#f43f5e'];
@@ -35,11 +35,15 @@ const formatDateTime = (dateInput) => {
   return `${day}/${month}/${year} : ${strHours}:${minutes}:${seconds} ${ampm}`;
 };
 
-// Helper for date-only key mapping (YYYY-MM-DD for comparison)
+// Robust helper for date-only mapping (YYYY-MM-DD local format)
 const getDateKey = (dateInput) => {
+  if (!dateInput) return '';
   const d = new Date(dateInput);
   if (isNaN(d.getTime())) return '';
-  return d.toISOString().split('T')[0];
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 
 export default function Dashboard() {
@@ -63,6 +67,42 @@ export default function Dashboard() {
   const [activeFolder, setActiveFolder] = useState('inbox');
   const [webmailMessages, setWebmailMessages] = useState([]);
   const [unreadWebmailCount, setUnreadWebmailCount] = useState(0);
+
+  // Webmail Split-View & Filter State
+  const [mailFilter, setMailFilter] = useState('all'); 
+  const [selectedEmail, setSelectedEmail] = useState(null);
+  const [listWidth, setListWidth] = useState(420);
+  const [isResizing, setIsResizing] = useState(false);
+
+  // Webmail Pagination & Bulk Selection State
+  const [webmailPage, setWebmailPage] = useState(1);
+  const webmailPerPage = 30;
+  const [selectedWebmailIds, setSelectedWebmailIds] = useState([]);
+
+  // Outlook-style Inline Reply/Forward States in Reading Pane
+  const [replyMode, setReplyMode] = useState(null); // 'reply' | 'forward' | null
+  const [inlineReplyForm, setInlineReplyForm] = useState({ to: '', subject: '', bodyHtml: '' });
+
+  // Resizable split view mousemove handler
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isResizing) return;
+      const newWidth = e.clientX - 280; 
+      if (newWidth > 300 && newWidth < 800) {
+        setListWidth(newWidth);
+      }
+    };
+    const handleMouseUp = () => setIsResizing(false);
+
+    if (isResizing) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
 
   // Individual Email Composer State (including draftId support)
   const [composeForm, setComposeForm] = useState({ draftId: null, to: '', subject: '', cc: '', bcc: '', bodyHtml: '' });
@@ -114,6 +154,16 @@ export default function Dashboard() {
 
   // Delivery Date Filter State
   const [selectedDeliveryDate, setSelectedDeliveryDate] = useState('Today');
+
+  // All Campaigns Date Filter State
+  const [selectedCampaignDateFilter, setSelectedCampaignDateFilter] = useState('');
+
+  // Analytics Tab Date Filter State
+  const [selectedAnalyticsDateFilter, setSelectedAnalyticsDateFilter] = useState('All');
+
+  // Analytics Logs Search / Filter State
+  const [logSearchTerm, setLogSearchTerm] = useState('');
+  const [logStatusFilter, setLogStatusFilter] = useState('All');
 
   // Sending Progress State
   const [isSending, setIsSending] = useState(false);
@@ -170,6 +220,17 @@ export default function Dashboard() {
 
   const campaignDataRef = useRef(campaignData);
   campaignDataRef.current = campaignData;
+
+  // Set default campaign date filter to latest available date when campaigns load
+  useEffect(() => {
+    if (campaigns.length > 0 && !selectedCampaignDateFilter) {
+      const dates = campaigns.map(c => getDateKey(c.sentAt)).filter(Boolean);
+      if (dates.length > 0) {
+        dates.sort((a, b) => new Date(b) - new Date(a));
+        setSelectedCampaignDateFilter(dates[0]);
+      }
+    }
+  }, [campaigns, selectedCampaignDateFilter]);
 
   // Play subtle audio chime for real-time updates
   const playNotificationChime = () => {
@@ -236,11 +297,9 @@ export default function Dashboard() {
           const currSig = (sigRes.data || []).find(s => s.emailId === defaultEmail);
           if (currSig) setSignatureHtml(currSig.htmlContent);
         }
-        // IMPORTANT: Only set selectedWebmailSender on initial load if empty!
         if (isInitial && !selectedWebmailSender) {
           setSelectedWebmailSender(defaultEmail);
         }
-      
       }
     } catch (err) {
       console.error('Backend connection error', err);
@@ -265,6 +324,8 @@ export default function Dashboard() {
         .then(res => {
           setWebmailMessages(res.data.messages || []);
           setUnreadWebmailCount(res.data.unreadCount || 0);
+          setWebmailPage(1);
+          setSelectedWebmailIds([]);
         })
         .catch(() => setWebmailMessages([]));
     }
@@ -286,7 +347,6 @@ export default function Dashboard() {
         bcc: composeForm.bcc
       });
 
-      // If this was sent from a draft, delete the draft record permanently
       if (composeForm.draftId) {
         await axios.delete(`/api/webmail/message/${composeForm.draftId}`).catch(() => {});
       }
@@ -297,6 +357,32 @@ export default function Dashboard() {
       setActiveTab('webmail');
     } catch (err) {
       triggerNotification('Failed to dispatch individual email.');
+    }
+  };
+
+  // Handler to Submit Inline Reply or Forward with Sender Signature Appended Automatically
+  const handleSendInlineReply = async (e) => {
+    e.preventDefault();
+    if (!inlineReplyForm.to || !inlineReplyForm.bodyHtml) {
+      return triggerNotification('Recipient and body are required for reply/forward.');
+    }
+    try {
+      const sigRecord = signatures.find(s => s.emailId === selectedWebmailSender);
+      const fullBody = inlineReplyForm.bodyHtml + (sigRecord ? `<br><br>${sigRecord.htmlContent}` : '');
+
+      await axios.post('/api/webmail/send-individual', {
+        senderEmail: selectedWebmailSender,
+        to: inlineReplyForm.to,
+        subject: inlineReplyForm.subject,
+        bodyHtml: fullBody
+      });
+
+      triggerNotification(replyMode === 'reply' ? 'Reply sent successfully!' : 'Email forwarded successfully!');
+      setReplyMode(null);
+      setInlineReplyForm({ to: '', subject: '', bodyHtml: '' });
+      setActiveFolder('sent');
+    } catch (err) {
+      triggerNotification('Failed to send response.');
     }
   };
 
@@ -399,7 +485,6 @@ export default function Dashboard() {
     }
   };
 
-  // Bulk Delete Group Contacts via Optimized Backend Route
   const handleDeleteGroupContacts = async () => {
     if (selectedGroupTab === 'All') {
       if (!confirm('Are you sure you want to delete ALL contacts across all groups?')) return;
@@ -418,7 +503,6 @@ export default function Dashboard() {
     }
   };
 
-  // Resend Campaign Only to Bounced Recipients
   const handleResendBounced = async (camp) => {
     const campaignLogs = (analytics?.logs || []).filter(l => l.campaignTitle === camp.title || l.campaignTitle === camp.subject);
     const bouncedEmails = campaignLogs.filter(l => l.status === 'Bounced' || l.status === 'Failed').map(l => l.recipientEmail);
@@ -492,23 +576,69 @@ export default function Dashboard() {
     return filteredContacts.slice(start, start + itemsPerPage);
   }, [filteredContacts, currentPage]);
 
-  const totalLogPages = Math.ceil((analytics?.logs || []).length / logsPerPage) || 1;
-  const paginatedLogs = useMemo(() => {
+  const filteredLogs = useMemo(() => {
     const logs = analytics?.logs || [];
+    return logs.filter(l => {
+      const matchesSearch = 
+        (l.campaignTitle && l.campaignTitle.toLowerCase().includes(logSearchTerm.toLowerCase())) ||
+        (l.recipientEmail && l.recipientEmail.toLowerCase().includes(logSearchTerm.toLowerCase()));
+      const matchesStatus = logStatusFilter === 'All' || l.status === logStatusFilter;
+      const matchesDate = selectedAnalyticsDateFilter === 'All' || getDateKey(l.sentAt) === selectedAnalyticsDateFilter;
+      return matchesSearch && matchesStatus && matchesDate;
+    });
+  }, [analytics?.logs, logSearchTerm, logStatusFilter, selectedAnalyticsDateFilter]);
+
+  const analyticsSummary = useMemo(() => {
+    const trends = analytics?.dailyTrends || [];
+    if (selectedAnalyticsDateFilter !== 'All') {
+      const matchedTrend = trends.find(t => getDateKey(t.date) === selectedAnalyticsDateFilter || t.date === selectedAnalyticsDateFilter);
+      if (matchedTrend) {
+        const totalDelivered = matchedTrend.delivered || 0;
+        const totalSent = matchedTrend.sent || 0;
+        const totalBounced = matchedTrend.bounced || 0;
+        const deliveryRate = totalSent > 0 ? ((totalDelivered / totalSent) * 100).toFixed(1) : 0;
+        const totalOpened = matchedTrend.opened || (analytics?.logs || []).filter(l => getDateKey(l.sentAt) === selectedAnalyticsDateFilter && l.opened).length;
+        const totalClicked = matchedTrend.clicked || (analytics?.logs || []).filter(l => getDateKey(l.sentAt) === selectedAnalyticsDateFilter && l.clicked).length;
+        const totalUnsubscribed = matchedTrend.unsubscribed || (analytics?.logs || []).filter(l => getDateKey(l.sentAt) === selectedAnalyticsDateFilter && l.unsubscribed).length;
+        
+        const openRate = totalSent > 0 ? ((totalOpened / totalSent) * 100).toFixed(1) : 0;
+        const clickRate = totalSent > 0 ? ((totalClicked / totalSent) * 100).toFixed(1) : 0;
+        const unsubscribeRate = totalSent > 0 ? ((totalUnsubscribed / totalSent) * 100).toFixed(1) : 0;
+
+        return {
+          totalDelivered,
+          totalSent,
+          totalBounced,
+          deliveryRate,
+          totalOpened,
+          totalClicked,
+          totalUnsubscribed,
+          openRate,
+          clickRate,
+          unsubscribeRate
+        };
+      }
+    }
+    return analytics?.summary || {};
+  }, [analytics, selectedAnalyticsDateFilter]);
+
+  const totalLogPages = Math.ceil(filteredLogs.length / logsPerPage) || 1;
+  const paginatedLogs = useMemo(() => {
     const start = (logPage - 1) * logsPerPage;
-    return logs.slice(start, start + logsPerPage);
-  }, [analytics?.logs, logPage]);
+    return filteredLogs.slice(start, start + logsPerPage);
+  }, [filteredLogs, logPage]);
 
   const handleExportLogsCSV = () => {
-    const logs = analytics?.logs || [];
+    const logs = filteredLogs;
     if (logs.length === 0) return triggerNotification('No logs available to export.');
-    const headers = ['Campaign Title', 'Sender Email', 'Recipient Email', 'Status', 'Opened', 'Unsubscribed', 'Timestamp'];
+    const headers = ['Campaign Title', 'Sender Email', 'Recipient Email', 'Status', 'Opened', 'Clicked', 'Unsubscribed', 'Timestamp'];
     const rows = logs.map(l => [
       `"${l.campaignTitle || ''}"`,
       `"${l.senderEmail || ''}"`,
       `"${l.recipientEmail || ''}"`,
       `"${l.status || ''}"`,
       l.opened ? 'Yes' : 'No',
+      l.clicked ? 'Yes' : 'No',
       l.unsubscribed ? 'Yes' : 'No',
       `"${formatDateTime(l.sentAt)}"`
     ]);
@@ -821,7 +951,7 @@ export default function Dashboard() {
         )}
       </AnimatePresence>
 
-      <main className="flex-1 flex flex-col h-full overflow-y-auto">
+      <main className="flex-1 flex flex-col h-full overflow-y-auto pb-20 lg:pb-0">
         <header className="h-16 bg-white border-b border-slate-200 px-4 sm:px-8 flex items-center justify-between sticky top-0 z-30">
           <div className="flex items-center gap-3">
             <button 
@@ -915,135 +1045,426 @@ export default function Dashboard() {
           )}
         </AnimatePresence>
 
-        <div className="p-4 sm:p-8 max-w-7xl mx-auto w-full">
+        <div className="p-4 sm:p-8 max-w-7xl mx-auto w-full pb-20">
           <AnimatePresence mode="wait">
             
            {/* WEBMAIL & CRM LEADS STAGES TAB */}
-              {activeTab === 'webmail' && (
-                <motion.div key="webmail" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
-                  <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-200">
-                    <div className="flex items-center gap-3">
-                      <h3 className="font-bold text-slate-800 uppercase text-sm">Webmail [{selectedWebmailSender}] &rarr; {activeFolder.toUpperCase()}</h3>
-                      <span className="text-xs bg-slate-100 text-slate-600 px-2.5 py-0.5 rounded-full font-semibold">{webmailMessages.length} Messages</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => {
-                        if (selectedWebmailSender) {
-                          axios.get(`/api/webmail/${selectedWebmailSender}/${activeFolder}`)
-                            .then(res => { setWebmailMessages(res.data.messages || []); setUnreadWebmailCount(res.data.unreadCount || 0); triggerNotification('Inbox synchronized.'); });
-                        }
-                      }} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"><RefreshCw size={14}/> Sync Live</button>
-                      <button onClick={() => { setComposeForm({ draftId: null, to: '', subject: '', cc: '', bcc: '', bodyHtml: '' }); setActiveTab('compose-individual'); }} className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2"><PenTool size={14} /> Compose Email</button>
-                    </div>
-                  </div>
+           {activeTab === 'webmail' && (
+             <motion.div key="webmail" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-4 h-[calc(100vh-140px)] flex flex-col">
+               {/* Top Header Bar */}
+               <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-200 shadow-sm shrink-0">
+                 <div className="flex items-center gap-3">
+                   <h3 className="font-extrabold text-slate-800 text-sm">
+                     Webmail [<span className="text-blue-600">{selectedWebmailSender}</span>] &rarr; {activeFolder.toUpperCase()}
+                   </h3>
+                   <span className="text-xs bg-slate-100 text-slate-600 px-2.5 py-0.5 rounded-full font-semibold">{webmailMessages.length} Messages</span>
+                 </div>
+                 <div className="flex items-center gap-2">
+                   <button onClick={() => {
+                     if (selectedWebmailSender) {
+                       axios.get(`/api/webmail/${selectedWebmailSender}/${activeFolder}`)
+                         .then(res => { setWebmailMessages(res.data.messages || []); setUnreadWebmailCount(res.data.unreadCount || 0); triggerNotification('Inbox synchronized.'); });
+                     }
+                   }} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition">
+                     <RefreshCw size={14}/> Sync Live
+                   </button>
+                   <button onClick={() => { setComposeForm({ draftId: null, to: '', subject: '', cc: '', bcc: '', bodyHtml: '' }); setActiveTab('compose-individual'); }} className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2">
+                     <PenTool size={14} /> Compose Email
+                   </button>
+                 </div>
+               </div>
 
-                  <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-                    <table className="w-full text-left border-collapse min-w-[700px]">
-                      <thead>
-                        <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 bg-slate-50 uppercase">
-                          <th className="p-4">From / To</th>
-                          <th className="p-4">Subject</th>
-                          <th className="p-4">Lead Stage (CRM Pipeline)</th>
-                          <th className="p-4">Timestamp</th>
-                          <th className="p-4 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-sm">
-                        {webmailMessages.length > 0 ? webmailMessages.map(msg => (
-                          <tr key={msg._id} className="hover:bg-slate-50">
-                            <td className="p-4 font-medium text-slate-800">{activeFolder === 'sent' ? `To: ${msg.to}` : msg.from}</td>
-                            <td className="p-4 text-slate-600">{msg.subject || '(No Subject)'}</td>
-                            <td className="p-4">
-                              <select 
-                                value={msg.leadStage} 
-                                onChange={(e) => handleUpdateLeadStage(msg._id, e.target.value)}
-                                className="border border-slate-200 rounded-lg p-1.5 text-xs bg-blue-50 text-blue-700 font-semibold"
-                              >
-                                <option value="New Lead">New Lead</option>
-                                <option value="Contacted">Contacted</option>
-                                <option value="Warm Prospect">Warm Prospect</option>
-                                <option value="Negotiation">Negotiation</option>
-                                <option value="Converted">Converted</option>
-                                <option value="Closed/Junk">Closed/Junk</option>
-                              </select>
-                            </td>
-                            <td className="p-4 text-xs text-slate-400">{formatDateTime(msg.date)}</td>
-                            <td className="p-4 text-right space-x-2">
-                              {/* If in Drafts folder, allow Reverting / Editing back to Composer */}
-                              {activeFolder === 'drafts' && (
-                                <button 
-                                  onClick={() => {
-                                    setComposeForm({
-                                      draftId: msg._id,
-                                      to: msg.to || '',
-                                      subject: msg.subject || '',
-                                      cc: msg.cc || '',
-                                      bcc: msg.bcc || '',
-                                      bodyHtml: msg.bodyHtml || ''
-                                    });
-                                    setActiveTab('compose-individual');
-                                  }}
-                                  className="text-blue-600 bg-blue-50 hover:bg-blue-100 text-xs font-semibold px-2.5 py-1 rounded-lg transition"
-                                >
-                                  Edit / Revert
-                                </button>
-                              )}
+               {/* Filter Tabs & Bulk Delete Action Bar */}
+               <div className="flex items-center justify-between gap-2 shrink-0 flex-wrap">
+                 <div className="flex items-center gap-2">
+                   {[
+                     { id: 'all', label: `All (${webmailMessages.length})` },
+                     { id: 'unread', label: `Unread (${webmailMessages.filter(m => !m.isRead).length})` },
+                     { id: 'flagged', label: `Flagged ⚑ (${webmailMessages.filter(m => m.isFlagged).length})` },
+                     { id: 'pinned', label: `Pinned 📌 (${webmailMessages.filter(m => m.isPinned).length})` }
+                   ].map(tab => (
+                     <button
+                       key={tab.id}
+                       onClick={() => { setMailFilter(tab.id); setWebmailPage(1); }}
+                       className={`px-4 py-1.5 rounded-xl text-xs font-bold transition ${mailFilter === tab.id ? 'bg-blue-600 text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                     >
+                       {tab.label}
+                     </button>
+                   ))}
+                 </div>
 
-                              {/* If in Drafts, allow sending directly from draft item */}
-                              {activeFolder === 'drafts' && (
-                                <button 
-                                  onClick={async () => {
-                                    setSelectedWebmailSender(msg.senderEmailId);
-                                    setComposeForm({
-                                      draftId: msg._id,
-                                      to: msg.to,
-                                      subject: msg.subject,
-                                      cc: msg.cc || '',
-                                      bcc: msg.bcc || '',
-                                      bodyHtml: msg.bodyHtml
-                                    });
-                                    setActiveTab('compose-individual');
-                                  }}
-                                  className="text-white bg-emerald-600 hover:bg-emerald-700 text-xs font-semibold px-2.5 py-1 rounded-lg transition"
-                                >
-                                  Send
-                                </button>
-                              )}
+                 {selectedWebmailIds.length > 0 && (
+                   <button
+                     onClick={async () => {
+                       if (!confirm(`Move ${selectedWebmailIds.length} selected emails to Deleted Items?`)) return;
+                       try {
+                         await Promise.all(selectedWebmailIds.map(id => axios.patch(`/api/webmail/message/${id}`, { folder: 'deleted' })));
+                         setWebmailMessages(prev => prev.filter(m => !selectedWebmailIds.includes(m._id)));
+                         setSelectedWebmailIds([]);
+                         setSelectedEmail(null);
+                         triggerNotification(`${selectedWebmailIds.length} emails moved to Deleted Items.`);
+                       } catch (err) {
+                         triggerNotification('Failed to bulk delete emails.');
+                       }
+                     }}
+                     className="bg-rose-50 text-rose-600 hover:bg-rose-100 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+                   >
+                     <Trash2 size={13} /> Delete Selected ({selectedWebmailIds.length})
+                   </button>
+                 )}
+               </div>
 
-                              {activeFolder !== 'deleted' ? (
-                                <button 
-                                  onClick={async () => {
-                                    await axios.patch(`/api/webmail/message/${msg._id}`, { folder: 'deleted' });
-                                    setWebmailMessages(prev => prev.filter(m => m._id !== msg._id));
-                                    triggerNotification('Moved to Deleted Items.');
-                                  }} 
-                                  className="text-rose-600 bg-rose-50 hover:bg-rose-100 text-xs font-semibold px-2.5 py-1 rounded-lg transition"
-                                >
-                                  Delete
-                                </button>
-                              ) : (
-                                <button 
-                                  onClick={async () => {
-                                    if (!confirm('Permanently delete this email?')) return;
-                                    await axios.delete(`/api/webmail/message/${msg._id}`);
-                                    setWebmailMessages(prev => prev.filter(m => m._id !== msg._id));
-                                    triggerNotification('Permanently deleted.');
-                                  }} 
-                                  className="text-white bg-rose-600 hover:bg-rose-700 text-xs font-semibold px-2.5 py-1 rounded-lg transition"
-                                >
-                                  Delete Permanently
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        )) : (
-                          <tr><td colSpan="5" className="p-8 text-center text-slate-400 italic">No messages found in this folder.</td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </motion.div>
-              )}
+               {/* Outlook / Gmail Split View Layout */}
+               <div className="flex-1 flex bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm relative">
+                 
+                 {/* Left Pane: Stacked Email List with Pagination & Checkboxes */}
+                 <div style={{ width: `${listWidth}px` }} className="flex flex-col border-r border-slate-200 bg-white h-full overflow-hidden shrink-0">
+                   
+                   {/* List Sub-header with Master Checkbox */}
+                   <div className="p-3 border-b border-slate-100 bg-slate-50 flex justify-between items-center text-[11px] font-extrabold text-slate-400 uppercase tracking-wider shrink-0">
+                     <div className="flex items-center gap-2">
+                       {(() => {
+                         const filtered = webmailMessages.filter(msg => {
+                           if (mailFilter === 'unread') return msg.isRead === false;
+                           if (mailFilter === 'flagged') return msg.isFlagged === true;
+                           if (mailFilter === 'pinned') return msg.isPinned === true;
+                           return true;
+                         });
+                         const startIdx = (webmailPage - 1) * webmailPerPage;
+                         const paginatedSlice = filtered.slice(startIdx, startIdx + webmailPerPage);
+
+                         return (
+                           <>
+                             <input 
+                               type="checkbox"
+                               onChange={(e) => {
+                                 if (e.target.checked) {
+                                   setSelectedWebmailIds(paginatedSlice.map(m => m._id));
+                                 } else {
+                                   setSelectedWebmailIds([]);
+                                 }
+                               }}
+                               checked={paginatedSlice.length > 0 && paginatedSlice.every(m => selectedWebmailIds.includes(m._id))}
+                               className="w-3.5 h-3.5 rounded text-blue-600 cursor-pointer"
+                             />
+                             <span>Conversations ({filtered.length})</span>
+                           </>
+                         );
+                       })()}
+                     </div>
+                   </div>
+                   
+                   {/* Scrollable Rows */}
+                   <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+                     {(() => {
+                       const filtered = webmailMessages.filter(msg => {
+                         if (mailFilter === 'unread') return msg.isRead === false;
+                         if (mailFilter === 'flagged') return msg.isFlagged === true;
+                         if (mailFilter === 'pinned') return msg.isPinned === true;
+                         return true;
+                       });
+
+                       const startIdx = (webmailPage - 1) * webmailPerPage;
+                       const paginatedSlice = filtered.slice(startIdx, startIdx + webmailPerPage);
+
+                       return paginatedSlice.length > 0 ? (
+                         paginatedSlice.map(msg => {
+                           const isSelected = selectedEmail?._id === msg._id;
+                           const isChecked = selectedWebmailIds.includes(msg._id);
+
+                           return (
+                             <div
+                               key={msg._id}
+                               onClick={async () => {
+                                 setSelectedEmail(msg);
+                                 setReplyMode(null);
+                                 if (!msg.isRead) {
+                                   try {
+                                     await axios.patch(`/api/webmail/message/${msg._id}`, { isRead: true });
+                                     setWebmailMessages(prev => prev.map(m => m._id === msg._id ? { ...m, isRead: true } : m));
+                                     setUnreadWebmailCount(prev => Math.max(0, prev - 1));
+                                   } catch (err) {}
+                                 }
+                               }}
+                               className={`p-3.5 cursor-pointer transition relative group flex items-start gap-3 ${isSelected ? 'bg-blue-50/70 border-l-4 border-blue-600' : 'hover:bg-slate-50'} ${!msg.isRead ? 'bg-slate-50/80 font-semibold' : ''}`}
+                             >
+                               <input 
+                                 type="checkbox"
+                                 checked={isChecked}
+                                 onClick={(e) => e.stopPropagation()}
+                                 onChange={(e) => {
+                                   if (e.target.checked) {
+                                     setSelectedWebmailIds([...selectedWebmailIds, msg._id]);
+                                   } else {
+                                     setSelectedWebmailIds(selectedWebmailIds.filter(id => id !== msg._id));
+                                   }
+                                 }}
+                                 className="mt-1 w-3.5 h-3.5 rounded text-blue-600 cursor-pointer shrink-0"
+                               />
+
+                               <div className="flex-1 min-w-0">
+                                 <div className="flex justify-between items-start mb-1">
+                                   <span className={`text-xs truncate max-w-[170px] ${!msg.isRead ? 'font-black text-slate-900' : 'font-medium text-slate-700'}`}>
+                                     {activeFolder === 'sent' ? `To: ${msg.to}` : msg.from}
+                                   </span>
+                                   <span className="text-[10px] text-slate-400 shrink-0">{formatDateTime(msg.date).split(' : ')[0]}</span>
+                                 </div>
+
+                                 <div className={`text-xs truncate mb-2 ${!msg.isRead ? 'font-bold text-slate-900' : 'text-slate-600'}`}>
+                                   {msg.subject || '(No Subject)'}
+                                 </div>
+
+                                 <div className="flex items-center justify-between">
+                                   <select 
+                                     value={msg.leadStage || 'New Lead'} 
+                                     onClick={(e) => e.stopPropagation()}
+                                     onChange={(e) => handleUpdateLeadStage(msg._id, e.target.value)}
+                                     className="border border-slate-200 rounded-md px-1.5 py-0.5 text-[10px] bg-blue-50 text-blue-700 font-bold"
+                                   >
+                                     <option value="New Lead">New Lead</option>
+                                     <option value="Contacted">Contacted</option>
+                                     <option value="Warm Prospect">Warm Prospect</option>
+                                     <option value="Negotiation">Negotiation</option>
+                                     <option value="Converted">Converted</option>
+                                     <option value="Closed/Junk">Closed/Junk</option>
+                                   </select>
+
+                                   {/* Quick Action Icons: Flag & Pin */}
+                                   <div className="flex items-center gap-1.5 opacity-80 group-hover:opacity-100 transition">
+                                     <button 
+                                       onClick={async (e) => {
+                                         e.stopPropagation();
+                                         const nextFlag = !msg.isFlagged;
+                                         try {
+                                           const res = await axios.patch(`/api/webmail/message/${msg._id}`, { isFlagged: nextFlag });
+                                           setWebmailMessages(prev => prev.map(m => m._id === msg._id ? { ...m, isFlagged: res.data.isFlagged } : m));
+                                         } catch (err) {
+                                           console.error('Flag patch error:', err);
+                                         }
+                                       }}
+                                       title="Flag Email"
+                                       className={`p-1 rounded hover:bg-slate-200 text-xs ${msg.isFlagged ? 'text-amber-500 font-bold' : 'text-slate-400'}`}
+                                     >
+                                       ⚑
+                                     </button>
+                                     <button 
+                                       onClick={async (e) => {
+                                         e.stopPropagation();
+                                         const nextPin = !msg.isPinned;
+                                         try {
+                                           const res = await axios.patch(`/api/webmail/message/${msg._id}`, { isPinned: nextPin });
+                                           setWebmailMessages(prev => prev.map(m => m._id === msg._id ? { ...m, isPinned: res.data.isPinned } : m));
+                                         } catch (err) {
+                                           console.error('Pin patch error:', err);
+                                         }
+                                       }}
+                                       title="Pin Email"
+                                       className={`p-1 rounded hover:bg-slate-200 text-xs ${msg.isPinned ? 'text-blue-600 font-bold' : 'text-slate-400'}`}
+                                     >
+                                       📌
+                                     </button>
+                                   </div>
+                                 </div>
+                               </div>
+                             </div>
+                           );
+                         })
+                       ) : (
+                         <div className="p-12 text-center text-xs text-slate-400 italic">No emails found in this view.</div>
+                       );
+                     })()}
+                   </div>
+
+                   {/* List Pagination Footer (30 items limit) */}
+                   <div className="p-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-xs shrink-0">
+                     {(() => {
+                       const filtered = webmailMessages.filter(msg => {
+                         if (mailFilter === 'unread') return msg.isRead === false;
+                         if (mailFilter === 'flagged') return msg.isFlagged === true;
+                         if (mailFilter === 'pinned') return msg.isPinned === true;
+                         return true;
+                       });
+                       const totalPages = Math.ceil(filtered.length / webmailPerPage) || 1;
+
+                       return (
+                         <>
+                           <span className="text-slate-500 font-medium">Page {webmailPage} of {totalPages}</span>
+                           <div className="flex items-center gap-1.5">
+                             <button
+                               onClick={() => setWebmailPage(prev => Math.max(prev - 1, 1))}
+                               disabled={webmailPage === 1}
+                               className="p-1.5 border border-slate-200 rounded-lg bg-white text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 transition"
+                             >
+                               <ChevronLeft size={14} />
+                             </button>
+                             <button
+                               onClick={() => setWebmailPage(prev => Math.min(prev + 1, totalPages))}
+                               disabled={webmailPage === totalPages}
+                               className="p-1.5 border border-slate-200 rounded-lg bg-white text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 transition"
+                             >
+                               <ChevronRight size={14} />
+                             </button>
+                           </div>
+                         </>
+                       );
+                     })()}
+                   </div>
+
+                 </div>
+
+                 {/* Resizable Divider Bar */}
+                 <div
+                   onMouseDown={() => setIsResizing(true)}
+                   className="w-1.5 bg-slate-100 hover:bg-blue-400 cursor-col-resize transition shrink-0 relative flex items-center justify-center"
+                   title="Drag to resize pane"
+                 >
+                   <div className="w-0.5 h-8 bg-slate-300 rounded-full"></div>
+                 </div>
+
+                 {/* Right Pane: Reading View */}
+                 <div className="flex-1 flex flex-col bg-white h-full overflow-hidden">
+                   {selectedEmail ? (
+                     <div className="flex-1 flex flex-col h-full overflow-y-auto">
+                       {/* Reading Header */}
+                       <div className="p-6 border-b border-slate-200 bg-slate-50/50 flex justify-between items-start gap-4">
+                         <div className="space-y-1">
+                           <h2 className="text-lg font-extrabold text-slate-900">{selectedEmail.subject || '(No Subject)'}</h2>
+                           <div className="text-xs text-slate-600 flex items-center gap-2">
+                             <span className="font-bold text-slate-800">{activeFolder === 'sent' ? `To: ${selectedEmail.to}` : `From: ${selectedEmail.from}`}</span>
+                             <span className="text-slate-400">&bull;</span>
+                             <span>{formatDateTime(selectedEmail.date)}</span>
+                           </div>
+                         </div>
+                         <div className="flex items-center gap-2">
+                           <button 
+                             onClick={async () => {
+                               await axios.patch(`/api/webmail/message/${selectedEmail._id}`, { folder: 'deleted' });
+                               setWebmailMessages(prev => prev.filter(m => m._id !== selectedEmail._id));
+                               setSelectedEmail(null);
+                               setReplyMode(null);
+                               triggerNotification('Moved to Deleted Items.');
+                             }}
+                             className="bg-rose-50 text-rose-600 hover:bg-rose-100 px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1"
+                           >
+                             <Trash2 size={13} /> Delete
+                           </button>
+                         </div>
+                       </div>
+
+                       {/* Email Body Content */}
+                       <div className="p-6 flex-1 overflow-y-auto prose prose-sm max-w-none text-slate-800 space-y-6">
+                         <div dangerouslySetInnerHTML={{ __html: selectedEmail.bodyHtml || '<p class="text-slate-400 italic">No content body available.</p>' }} />
+
+                         {/* Outlook-Style Reply & Forward Action Buttons below content */}
+                         <div className="flex items-center gap-3 pt-4 border-t border-slate-100">
+                           <button
+                             onClick={() => {
+                               setReplyMode('reply');
+                               const sigRecord = signatures.find(s => s.emailId === selectedWebmailSender);
+                               const sigHtml = sigRecord ? `<br><br>${sigRecord.htmlContent}` : '';
+                               
+                               setInlineReplyForm({
+                                 to: selectedEmail.from || '',
+                                 subject: `Re: ${selectedEmail.subject || ''}`,
+                                 bodyHtml: `<p><br></p>${sigHtml}<hr/><blockquote style="margin:10px 0 0 10px;border-left:2px solid #ccc;padding-left:10px;color:#666;">` + (selectedEmail.bodyHtml || '') + '</blockquote>'
+                               });
+                             }}
+                             className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+                           >
+                             <Reply size={14} /> Reply
+                           </button>
+                           <button
+                             onClick={() => {
+                               setReplyMode('forward');
+                               const sigRecord = signatures.find(s => s.emailId === selectedWebmailSender);
+                               const sigHtml = sigRecord ? `<br><br>${sigRecord.htmlContent}` : '';
+
+                               setInlineReplyForm({
+                                 to: '',
+                                 subject: `Fwd: ${selectedEmail.subject || ''}`,
+                                 bodyHtml: `<p><br></p>${sigHtml}<hr/>---------- Forwarded message ----------<br/>From: ${selectedEmail.from}<br/>Subject: ${selectedEmail.subject}<br/><br/>` + (selectedEmail.bodyHtml || '')
+                               });
+                             }}
+                             className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+                           >
+                             <Forward size={14} /> Forward
+                           </button>
+                         </div>
+
+                         {/* Inline Reply / Forward Drawer with Sender's Signature */}
+                         {replyMode && (
+                           <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3 mt-4 shadow-inner">
+                             <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                               <h4 className="text-xs font-bold uppercase text-slate-700 flex items-center gap-1.5">
+                                 {replyMode === 'reply' ? <Reply size={14} className="text-blue-600"/> : <Forward size={14} className="text-indigo-600"/>}
+                                 {replyMode === 'reply' ? `Reply to ${selectedEmail.from}` : 'Forward Email'}
+                               </h4>
+                               <button onClick={() => setReplyMode(null)} className="text-slate-400 hover:text-slate-600">
+                                 <X size={16} />
+                               </button>
+                             </div>
+
+                             <form onSubmit={handleSendInlineReply} className="space-y-3">
+                               <div>
+                                 <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">To:</label>
+                                 <input 
+                                   type="email" 
+                                   required 
+                                   value={inlineReplyForm.to} 
+                                   onChange={e => setInlineReplyForm({...inlineReplyForm, to: e.target.value})} 
+                                   className="w-full border border-slate-200 rounded-xl px-3 py-1.5 text-xs bg-white"
+                                 />
+                               </div>
+                               <div>
+                                 <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Subject:</label>
+                                 <input 
+                                   type="text" 
+                                   required 
+                                   value={inlineReplyForm.subject} 
+                                   onChange={e => setInlineReplyForm({...inlineReplyForm, subject: e.target.value})} 
+                                   className="w-full border border-slate-200 rounded-xl px-3 py-1.5 text-xs bg-white"
+                                 />
+                               </div>
+                               <div>
+                                 <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Message (Signature Auto-Appended):</label>
+                                 <EmailEditor 
+                                   content={inlineReplyForm.bodyHtml} 
+                                   onChange={html => setInlineReplyForm({...inlineReplyForm, bodyHtml: html})} 
+                                 />
+                               </div>
+                               <div className="flex justify-end gap-2 pt-1">
+                                 <button 
+                                   type="button" 
+                                   onClick={() => setReplyMode(null)} 
+                                   className="px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-100 transition"
+                                 >
+                                   Cancel
+                                 </button>
+                                 <button 
+                                   type="submit" 
+                                   className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-sm flex items-center gap-1.5"
+                                 >
+                                   <Send size={13} /> Send {replyMode === 'reply' ? 'Reply' : 'Forward'}
+                                 </button>
+                               </div>
+                             </form>
+                           </div>
+                         )}
+
+                       </div>
+                     </div>
+                   ) : (
+                     <div className="flex-1 flex flex-col items-center justify-center p-12 text-center text-slate-400 space-y-2 bg-slate-50/30">
+                       <Mail size={48} className="text-slate-300 animate-pulse" />
+                       <p className="text-sm font-semibold text-slate-600">Select an email to read</p>
+                       <p className="text-xs text-slate-400">Choose a message from the list on the left to preview its content in split view.</p>
+                     </div>
+                   )}
+                 </div>
+
+               </div>
+             </motion.div>
+           )}
 
             {/* COMPOSE INDIVIDUAL EMAIL UNDER SENDER WITH SIGNATURES, TAGS & SAVE TO DRAFT */}
             {activeTab === 'compose-individual' && (
@@ -1142,7 +1563,7 @@ export default function Dashboard() {
 
                           const dateKeysSet = new Set(['Today']);
                           if (hasYesterdayData) dateKeysSet.add('Yesterday');
-                          trends.forEach(t => dateKeysSet.add(t.date));
+                          trends.forEach(t => dateKeysSet.add(getDateKey(t.date) || t.date));
 
                           const uniqueDates = Array.from(dateKeysSet);
 
@@ -1186,7 +1607,7 @@ export default function Dashboard() {
                           <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 shadow-sm space-y-3">
                             <div className="flex justify-between items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
                               <span>Date: {matchedTrend.date}</span>
-                              <span className="text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full">Active Filter</span>
+                              <button onClick={() => { setSelectedCampaignDateFilter(getDateKey(matchedTrend.date) || matchedTrend.date); setActiveTab('all-campaigns'); }} className="text-blue-600 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-full transition">View Day-wise Campaigns &rarr;</button>
                             </div>
                             <div className="grid grid-cols-3 gap-3 text-center">
                               <div className="bg-white p-3 rounded-xl border border-slate-100">
@@ -1728,96 +2149,150 @@ export default function Dashboard() {
             {/* ALL CAMPAIGNS TAB */}
             {activeTab === 'all-campaigns' && (
               <motion.div key="all-campaigns" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
-                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm space-y-4">
                   <div className="p-4 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                     <h3 className="text-sm font-bold text-slate-800 uppercase">Past Campaigns & Recipient Delivery Logs ({campaigns.length})</h3>
                     <button onClick={() => fetchData(false)} className="text-xs font-semibold text-blue-600 hover:underline">Refresh List</button>
                   </div>
-                  <div className="divide-y divide-slate-200">
-                    {campaigns.length > 0 ? (
-                      campaigns.map(camp => {
-                        const campaignLogs = (analytics?.logs || []).filter(l => l.campaignTitle === camp.title || l.campaignTitle === camp.subject);
-                        const hasBouncedRecipients = campaignLogs.some(l => l.status === 'Bounced' || l.status === 'Failed');
-                        
+
+                  {/* Horizontal Date Scroller Filter for All Campaigns (Excluding 'All' option so it defaults to latest date) */}
+                  <div className="px-4 flex items-center gap-2 overflow-x-auto pb-2">
+                    {(() => {
+                      const trends = analytics?.dailyTrends || [];
+                      const dateKeysSet = new Set();
+                      campaigns.forEach(c => {
+                        const k = getDateKey(c.sentAt);
+                        if (k) dateKeysSet.add(k);
+                      });
+                      trends.forEach(t => {
+                        const k = getDateKey(t.date);
+                        if (k) dateKeysSet.add(k);
+                      });
+                      const uniqueDates = Array.from(dateKeysSet).sort((a, b) => new Date(b) - new Date(a));
+
+                      return uniqueDates.map((dateKey) => {
+                        const isSelected = selectedCampaignDateFilter === dateKey;
                         return (
-                          <div key={camp._id} className="p-5 space-y-4 hover:bg-slate-50/40 transition">
-                            <div className="flex flex-wrap items-center justify-between gap-4">
-                              <div>
-                                <h4 className="font-extrabold text-slate-900 text-base">{camp.title || 'Untitled Campaign'}</h4>
-                                <p className="text-xs text-slate-500">Subject: <span className="font-medium text-slate-700">{camp.subject || 'No Subject'}</span></p>
-                              </div>
-                              <div className="flex items-center gap-2 sm:gap-3 text-xs flex-wrap">
-                                <span className="bg-slate-100 text-slate-700 font-semibold px-3 py-1 rounded-xl">From: {camp.senderEmail}</span>
-                                <span className="bg-blue-50 text-blue-600 font-bold px-3 py-1 rounded-xl">Group: {camp.group}</span>
-                                <span className="bg-emerald-50 text-emerald-600 font-bold px-3 py-1 rounded-xl">{formatDateTime(camp.sentAt)}</span>
-                                
-                                {/* Resend Bounced Only Button */}
-                                {hasBouncedRecipients && (
-                                  <button 
-                                    onClick={() => handleResendBounced(camp)}
-                                    className="bg-amber-500 hover:bg-amber-600 text-white font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 shadow-sm"
-                                    title="Resend email only to contacts whose delivery failed or bounced"
-                                  >
-                                    <RotateCcw size={13} /> Resend Bounced
-                                  </button>
-                                )}
-
-                                <button 
-                                  onClick={() => handleLoadCampaignForResend(camp)}
-                                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 shadow-sm"
-                                >
-                                  <RefreshCw size={13} /> Edit & Resend
-                                </button>
-                              </div>
-                            </div>
-
-                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-                              <h5 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                                Recipient Delivery Details ({campaignLogs.length} emails dispatched)
-                              </h5>
-                              {campaignLogs.length > 0 ? (
-                                <div className="overflow-x-auto">
-                                  <table className="w-full text-left border-collapse text-xs min-w-[500px]">
-                                    <thead>
-                                      <tr className="border-b border-slate-200 text-slate-400 font-semibold uppercase">
-                                        <th className="py-2 px-3">Recipient Email</th>
-                                        <th className="py-2 px-3">Status</th>
-                                        <th className="py-2 px-3">Opened</th>
-                                        <th className="py-2 px-3">Unsubscribed</th>
-                                        <th className="py-2 px-3 text-right">Timestamp</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                      {campaignLogs.map((log, lIdx) => (
-                                        <tr key={lIdx} className="hover:bg-white">
-                                          <td className="py-2.5 px-3 font-medium text-slate-800">{log.recipientEmail}</td>
-                                          <td className="py-2.5 px-3">
-                                            <span className={`px-2 py-0.5 rounded-full font-semibold ${log.status === 'Delivered' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                                              {log.status}
-                                            </span>
-                                          </td>
-                                          <td className="py-2.5 px-3">
-                                            {log.opened ? <span className="text-blue-600 font-bold">Yes</span> : <span className="text-slate-400">No</span>}
-                                          </td>
-                                          <td className="py-2.5 px-3">
-                                            {log.unsubscribed ? <span className="text-amber-600 font-bold">Yes</span> : <span className="text-slate-400">No</span>}
-                                          </td>
-                                          <td className="py-2.5 px-3 text-right text-slate-400">{formatDateTime(log.sentAt)}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              ) : (
-                                <p className="text-xs text-slate-400 italic">No specific recipient delivery logs found for this campaign entry.</p>
-                              )}
-                            </div>
-                          </div>
+                          <button
+                            key={dateKey}
+                            onClick={() => setSelectedCampaignDateFilter(dateKey)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap ${
+                              isSelected ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            {dateKey}
+                          </button>
                         );
-                      })
-                    ) : (
-                      <div className="p-12 text-center text-slate-400 italic">No past campaigns found. Dispatch a new campaign to see it here.</div>
-                    )}
+                      });
+                    })()}
+                  </div>
+
+                  <div className="divide-y divide-slate-200">
+                    {(() => {
+                      const filteredCampaigns = campaigns.filter(camp => {
+                        if (!selectedCampaignDateFilter) return true;
+                        const campDateKey = getDateKey(camp.sentAt);
+                        return campDateKey === selectedCampaignDateFilter;
+                      });
+
+                      return filteredCampaigns.length > 0 ? (
+                        filteredCampaigns.map(camp => {
+                          const rawCampaignLogs = (analytics?.logs || []).filter(l => l.campaignTitle === camp.title || l.campaignTitle === camp.subject);
+                          const campaignLogs = rawCampaignLogs.filter(l => {
+                            if (!selectedCampaignDateFilter) return true;
+                            const logDateKey = getDateKey(l.sentAt);
+                            return logDateKey === selectedCampaignDateFilter;
+                          });
+
+                          const hasBouncedRecipients = campaignLogs.some(l => l.status === 'Bounced' || l.status === 'Failed');
+                          const totalClicksForCamp = campaignLogs.filter(l => l.clicked).length;
+                          const totalOpensForCamp = campaignLogs.filter(l => l.opened).length;
+                          
+                          return (
+                            <div key={camp._id} className="p-5 space-y-4 hover:bg-slate-50/40 transition">
+                              <div className="flex flex-wrap items-center justify-between gap-4">
+                                <div>
+                                  <h4 className="font-extrabold text-slate-900 text-base">{camp.title || 'Untitled Campaign'}</h4>
+                                  <p className="text-xs text-slate-500">Subject: <span className="font-medium text-slate-700">{camp.subject || 'No Subject'}</span></p>
+                                </div>
+                                <div className="flex items-center gap-2 sm:gap-3 text-xs flex-wrap">
+                                  <span className="bg-slate-100 text-slate-700 font-semibold px-3 py-1 rounded-xl">From: {camp.senderEmail}</span>
+                                  <span className="bg-blue-50 text-blue-600 font-bold px-3 py-1 rounded-xl">Group: {camp.group}</span>
+                                  <span className="bg-indigo-50 text-indigo-600 font-bold px-3 py-1 rounded-xl">👁️ {totalOpensForCamp} Opens</span>
+                                  <span className="bg-purple-50 text-purple-600 font-bold px-3 py-1 rounded-xl">🖱️ {totalClicksForCamp} Clicks</span>
+                                  <span className="bg-emerald-50 text-emerald-600 font-bold px-3 py-1 rounded-xl">{formatDateTime(camp.sentAt)}</span>
+                                  
+                                  {hasBouncedRecipients && (
+                                    <button 
+                                      onClick={() => handleResendBounced(camp)}
+                                      className="bg-amber-500 hover:bg-amber-600 text-white font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 shadow-sm"
+                                      title="Resend email only to contacts whose delivery failed or bounced"
+                                    >
+                                      <RotateCcw size={13} /> Resend Bounced
+                                    </button>
+                                  )}
+
+                                  <button 
+                                    onClick={() => handleLoadCampaignForResend(camp)}
+                                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 shadow-sm"
+                                  >
+                                    <RefreshCw size={13} /> Edit & Resend
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                                <h5 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                                  Recipient Delivery Details ({campaignLogs.length} emails dispatched {selectedCampaignDateFilter ? `on ${selectedCampaignDateFilter}` : ''})
+                                </h5>
+                                {campaignLogs.length > 0 ? (
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-left border-collapse text-xs min-w-[500px]">
+                                      <thead>
+                                        <tr className="border-b border-slate-200 text-slate-400 font-semibold uppercase">
+                                          <th className="py-2 px-3">Recipient Email</th>
+                                          <th className="py-2 px-3">Status</th>
+                                          <th className="py-2 px-3">Opened</th>
+                                          <th className="py-2 px-3">Clicked</th>
+                                          <th className="py-2 px-3">Unsubscribed</th>
+                                          <th className="py-2 px-3 text-right">Timestamp</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-100">
+                                        {campaignLogs.map((log, lIdx) => (
+                                          <tr key={lIdx} className="hover:bg-white">
+                                            <td className="py-2.5 px-3 font-medium text-slate-800">{log.recipientEmail}</td>
+                                            <td className="py-2.5 px-3">
+                                              <span className={`px-2 py-0.5 rounded-full font-semibold ${log.status === 'Delivered' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                                {log.status}
+                                              </span>
+                                            </td>
+                                            <td className="py-2.5 px-3">
+                                              {log.opened ? <span className="text-blue-600 font-bold">Yes</span> : <span className="text-slate-400">No</span>}
+                                            </td>
+                                            <td className="py-2.5 px-3">
+                                              {log.clicked ? <span className="text-purple-600 font-bold">Yes</span> : <span className="text-slate-400">No</span>}
+                                            </td>
+                                            <td className="py-2.5 px-3">
+                                              {log.unsubscribed ? <span className="text-amber-600 font-bold">Yes</span> : <span className="text-slate-400">No</span>}
+                                            </td>
+                                            <td className="py-2.5 px-3 text-right text-slate-400">{formatDateTime(log.sentAt)}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                ) : (
+                                  <p className="text-xs text-slate-400 italic">No recipient delivery logs found for this date.</p>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className="p-12 text-center text-slate-400 italic">No past campaigns found for this date.</div>
+                      );
+                    })()}
                   </div>
                 </div>
               </motion.div>
@@ -1826,37 +2301,74 @@ export default function Dashboard() {
             {/* ANALYTICS & LOGS TAB */}
             {activeTab === 'analytics' && (
               <motion.div key="analytics" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
+                
+                {/* Horizontal Date Scroller for Analytics Tab */}
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Select Analytics Date Report</h4>
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                    {(() => {
+                      const trends = analytics?.dailyTrends || [];
+                      const dateKeysSet = new Set(['All']);
+                      trends.forEach(t => {
+                        const k = getDateKey(t.date);
+                        if (k) dateKeysSet.add(k);
+                      });
+                      (analytics?.logs || []).forEach(l => {
+                        const k = getDateKey(l.sentAt);
+                        if (k) dateKeysSet.add(k);
+                      });
+                      const uniqueDates = Array.from(dateKeysSet);
+
+                      return uniqueDates.map((dateKey) => {
+                        const isSelected = selectedAnalyticsDateFilter === dateKey;
+                        return (
+                          <button
+                            key={dateKey}
+                            onClick={() => { setSelectedAnalyticsDateFilter(dateKey); setLogPage(1); }}
+                            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap ${
+                              isSelected ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            {dateKey === 'All' ? 'All Dates' : dateKey}
+                          </button>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+
+                {/* Dynamic Summary Metric Cards */}
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4">
                   <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm text-center">
                     <p className="text-xs font-bold text-slate-400 uppercase">Delivered</p>
-                    <h2 className="text-xl sm:text-2xl font-extrabold text-emerald-600 mt-1">{analytics?.summary?.totalDelivered || 0}</h2>
-                    <p className="text-[11px] text-slate-500 mt-0.5">{analytics?.summary?.deliveryRate || 0}% Rate</p>
+                    <h2 className="text-xl sm:text-2xl font-extrabold text-emerald-600 mt-1">{analyticsSummary?.totalDelivered || 0}</h2>
+                    <p className="text-[11px] text-slate-500 mt-0.5">{analyticsSummary?.deliveryRate || 0}% Rate</p>
                   </div>
                   <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm text-center">
                     <p className="text-xs font-bold text-slate-400 uppercase">Open Rate</p>
-                    <h2 className="text-xl sm:text-2xl font-extrabold text-blue-600 mt-1">{analytics?.summary?.openRate || 0}%</h2>
-                    <p className="text-[11px] text-slate-500 mt-0.5">{analytics?.summary?.totalOpened || 0} Opens</p>
+                    <h2 className="text-xl sm:text-2xl font-extrabold text-blue-600 mt-1">{analyticsSummary?.openRate || 0}%</h2>
+                    <p className="text-[11px] text-slate-500 mt-0.5">{analyticsSummary?.totalOpened || 0} Opens</p>
                   </div>
                   <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm text-center">
                     <p className="text-xs font-bold text-slate-400 uppercase">Click Rate</p>
-                    <h2 className="text-xl sm:text-2xl font-extrabold text-indigo-600 mt-1">{analytics?.summary?.clickRate || 0}%</h2>
-                    <p className="text-[11px] text-slate-500 mt-0.5">{analytics?.summary?.totalClicked || 0} Clicks</p>
+                    <h2 className="text-xl sm:text-2xl font-extrabold text-indigo-600 mt-1">{analyticsSummary?.clickRate || 0}%</h2>
+                    <p className="text-[11px] text-slate-500 mt-0.5">{analyticsSummary?.totalClicked || 0} Clicks</p>
                   </div>
                   <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm text-center">
                     <p className="text-xs font-bold text-slate-400 uppercase">Unsubscribes</p>
-                    <h2 className="text-xl sm:text-2xl font-extrabold text-amber-600 mt-1">{analytics?.summary?.totalUnsubscribed || 0}</h2>
-                    <p className="text-[11px] text-slate-500 mt-0.5">{analytics?.summary?.unsubscribeRate || 0}% Rate</p>
+                    <h2 className="text-xl sm:text-2xl font-extrabold text-amber-600 mt-1">{analyticsSummary?.totalUnsubscribed || 0}</h2>
+                    <p className="text-[11px] text-slate-500 mt-0.5">{analyticsSummary?.unsubscribeRate || 0}% Rate</p>
                   </div>
                   <div className="col-span-2 md:col-span-1 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm text-center">
                     <p className="text-xs font-bold text-slate-400 uppercase">Bounced</p>
-                    <h2 className="text-xl sm:text-2xl font-extrabold text-rose-600 mt-1">{analytics?.summary?.totalBounced || 0}</h2>
+                    <h2 className="text-xl sm:text-2xl font-extrabold text-rose-600 mt-1">{analyticsSummary?.totalBounced || 0}</h2>
                     <p className="text-[11px] text-slate-500 mt-0.5">Failed Delivery</p>
                   </div>
                 </div>
 
                 <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm space-y-4">
                   <div className="p-4 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                    <h3 className="text-sm font-bold text-slate-800 uppercase">Real-Time Mail Engagement Logs ({(analytics?.logs || []).length})</h3>
+                    <h3 className="text-sm font-bold text-slate-800 uppercase">Real-Time Mail Engagement Logs ({filteredLogs.length})</h3>
                     <div className="flex items-center gap-3 flex-wrap">
                       <button 
                         onClick={handleExportLogsCSV}
@@ -1868,6 +2380,31 @@ export default function Dashboard() {
                     </div>
                   </div>
 
+                  {/* Filter & Search Bar for Engagement Logs */}
+                  <div className="px-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      {['All', 'Delivered', 'Bounced', 'Failed'].map(status => (
+                        <button
+                          key={status}
+                          onClick={() => { setLogStatusFilter(status); setLogPage(1); }}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${logStatusFilter === status ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                        >
+                          {status}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="relative w-full sm:w-72">
+                      <Search size={16} className="absolute left-3 top-3 text-slate-400" />
+                      <input 
+                        type="text" 
+                        placeholder="Search logs by campaign or email..." 
+                        value={logSearchTerm} 
+                        onChange={(e) => { setLogSearchTerm(e.target.value); setLogPage(1); }} 
+                        className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                      />
+                    </div>
+                  </div>
+
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse min-w-[600px]">
                       <thead>
@@ -1876,6 +2413,7 @@ export default function Dashboard() {
                           <th className="p-4">Recipient</th>
                           <th className="p-4">Status</th>
                           <th className="p-4">Opened</th>
+                          <th className="p-4">Clicked</th>
                           <th className="p-4">Unsubscribed</th>
                           <th className="p-4 text-right">Timestamp</th>
                         </tr>
@@ -1895,6 +2433,9 @@ export default function Dashboard() {
                                 {l.opened ? <span className="bg-blue-50 text-blue-600 text-xs font-bold px-2 py-0.5 rounded">Yes</span> : <span className="text-slate-400 text-xs">No</span>}
                               </td>
                               <td className="p-4">
+                                {l.clicked ? <span className="bg-purple-50 text-purple-600 text-xs font-bold px-2 py-0.5 rounded">Yes</span> : <span className="text-slate-400 text-xs">No</span>}
+                              </td>
+                              <td className="p-4">
                                 {l.unsubscribed ? <span className="bg-amber-50 text-amber-600 text-xs font-bold px-2 py-0.5 rounded">Yes</span> : <span className="text-slate-400 text-xs">No</span>}
                               </td>
                               <td className="p-4 text-xs text-slate-400 text-right">{formatDateTime(l.sentAt)}</td>
@@ -1902,7 +2443,7 @@ export default function Dashboard() {
                           ))
                         ) : (
                           <tr>
-                            <td colSpan="6" className="p-8 text-center text-slate-400 italic">No engagement logs recorded yet.</td>
+                            <td colSpan="7" className="p-8 text-center text-slate-400 italic">No engagement logs recorded for this filter.</td>
                           </tr>
                         )}
                       </tbody>
@@ -1911,7 +2452,7 @@ export default function Dashboard() {
 
                   <div className="p-4 border-t border-slate-200 bg-slate-50 flex flex-col sm:flex-row items-center justify-between gap-3">
                     <span className="text-xs font-medium text-slate-500">
-                      Showing page {logPage} of {totalLogPages} ({(analytics?.logs || []).length} total logs)
+                      Showing page {logPage} of {totalLogPages} ({filteredLogs.length} total logs)
                     </span>
                     <div className="flex items-center gap-2">
                       <button 

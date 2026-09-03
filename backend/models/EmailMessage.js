@@ -12,6 +12,8 @@ const EmailMessageSchema = new mongoose.Schema({
   subject: { type: String },
   bodyHtml: { type: String },
   isRead: { type: Boolean, default: false },
+  isFlagged: { type: Boolean, default: false },
+  isPinned: { type: Boolean, default: false },
   leadStage: { 
     type: String, 
     enum: ['New Lead', 'Contacted', 'Warm Prospect', 'Negotiation', 'Converted', 'Closed/Junk'], 

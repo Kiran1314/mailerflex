@@ -5,11 +5,21 @@ import { Paperclip, X, Link as LinkIcon } from 'lucide-react';
 export default function EmailEditor({ content, onChange, onAttachmentChange }) {
   const editorRef = useRef(null);
   const [attachments, setAttachments] = useState([]);
+  const isInitializedRef = useRef(false);
 
-  // Sync external content changes (like template selection) into the editor
+  // Sync external content changes into the editor initially or on reset
   useEffect(() => {
-    if (editorRef.current && editorRef.current.innerHTML !== content) {
-      editorRef.current.innerHTML = content || '';
+    if (editorRef.current && (!isInitializedRef.current || editorRef.current.innerHTML !== content)) {
+      editorRef.current.innerHTML = content || '<p><br></p>';
+      isInitializedRef.current = true;
+      
+      // Automatically place cursor at the very top of the editor for typing
+      const range = document.createRange();
+      const sel = window.getSelection();
+      range.setStart(editorRef.current, 0);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
     }
   }, [content]);
 
@@ -47,7 +57,7 @@ export default function EmailEditor({ content, onChange, onAttachmentChange }) {
     const linkText = selectedText || prompt('Enter text for the link:', url) || url;
     
     const aTag = document.createElement('a');
-    aTag.href = url; // Directly uses the exact URL entered
+    aTag.href = url;
     aTag.target = '_blank';
     aTag.rel = 'noopener noreferrer';
     aTag.innerText = linkText;
@@ -104,7 +114,7 @@ export default function EmailEditor({ content, onChange, onAttachmentChange }) {
             <button 
               type="button" 
               onClick={handleInsertLink} 
-              title="Insert Multiple External Links"
+              title="Insert External Link"
               className="px-2.5 py-1 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 flex items-center gap-1 text-blue-600 font-semibold"
             >
               <LinkIcon size={12} /> Link
@@ -135,7 +145,7 @@ export default function EmailEditor({ content, onChange, onAttachmentChange }) {
         </div>
       </div>
 
-      {/* Editable Content Area with 1109px Image Rules */}
+      {/* Editable Content Area */}
       <div
         ref={editorRef}
         contentEditable
