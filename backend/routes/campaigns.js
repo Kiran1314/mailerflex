@@ -149,7 +149,7 @@ router.post('/send', async (req, res) => {
           const unsubscribeUrl = `https://mailer.ibcstudio.com/api/analytics/unsubscribe/${logRecord._id}`;
 
           personalizedHtml += `<img src="${openTrackerUrl}" width="1" height="1" style="display:none;" alt="" />`;
-           
+          personalizedHtml += `<br><p style="font-size: 11px; color: #888; text-align: center; margin-top: 20px;">Don't want these emails anymore? <a href="${unsubscribeUrl}" style="color: #555; text-decoration: underline;">Unsubscribe here</a>.</p>`;
 
           try {
             let mailOptions = {
@@ -246,8 +246,7 @@ router.post('/resend-bounced', async (req, res) => {
           const unsubscribeUrl = `https://mailer.ibcstudio.com/api/analytics/unsubscribe/${logRecord._id}`;
 
           personalizedHtml += `<img src="${openTrackerUrl}" width="1" height="1" style="display:none;" alt="" />`;
-          personalizedHtml += `<br><p style="font-size: 11px; color: #888; text-align: center; margin-top: 20px;">Don't want these emails anymore? <a href="${unsubscribeUrl}" style="color: #555; text-decoration: underline;">Unsubscribe here</a>.</p>`;
-
+           
           let mailOptions = {
             from: `"IBC Studio" <${senderRecord.email}>`,
             to: recipientEmail,
