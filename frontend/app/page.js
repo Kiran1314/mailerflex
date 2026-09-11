@@ -35,7 +35,18 @@ const formatDateTime = (dateInput) => {
   return `${day}/${month}/${year} : ${strHours}:${minutes}:${seconds} ${ampm}`;
 };
 
-// Robust helper for date-only mapping (YYYY-MM-DD local format)
+// Helper to format date string to dd-mm-yyyy display format
+const formatDateDDMMYYYY = (dateInput) => {
+  if (!dateInput) return '';
+  const d = new Date(dateInput);
+  if (isNaN(d.getTime())) return '';
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}-${month}-${year}`;
+};
+
+// Robust helper for date-only mapping (YYYY-MM-DD local format for underlying key comparisons)
 const getDateKey = (dateInput) => {
   if (!dateInput) return '';
   const d = new Date(dateInput);
@@ -221,10 +232,11 @@ export default function Dashboard() {
   const campaignDataRef = useRef(campaignData);
   campaignDataRef.current = campaignData;
 
-  // Set default campaign date filter to latest available date when campaigns load
+  // Automatically default campaign date filter to latest available current/past date (excluding future dates)
   useEffect(() => {
     if (campaigns.length > 0 && !selectedCampaignDateFilter) {
-      const dates = campaigns.map(c => getDateKey(c.sentAt)).filter(Boolean);
+      const todayKey = getDateKey(new Date());
+      const dates = campaigns.map(c => getDateKey(c.sentAt)).filter(k => k && k <= todayKey);
       if (dates.length > 0) {
         dates.sort((a, b) => new Date(b) - new Date(a));
         setSelectedCampaignDateFilter(dates[0]);
@@ -1563,7 +1575,10 @@ export default function Dashboard() {
 
                           const dateKeysSet = new Set(['Today']);
                           if (hasYesterdayData) dateKeysSet.add('Yesterday');
-                          trends.forEach(t => dateKeysSet.add(getDateKey(t.date) || t.date));
+                          trends.forEach(t => {
+                            const k = getDateKey(t.date);
+                            if (k && k <= todayKey) dateKeysSet.add(k);
+                          });
 
                           const uniqueDates = Array.from(dateKeysSet);
 
@@ -1571,6 +1586,7 @@ export default function Dashboard() {
                             let label = dateKey;
                             if (dateKey === 'Today') label = 'Today';
                             else if (dateKey === 'Yesterday') label = 'Yesterday';
+                            else label = formatDateDDMMYYYY(dateKey);
 
                             const isSelected = selectedDeliveryDate === dateKey || (dateKey === 'Today' && selectedDeliveryDate === todayKey);
 
@@ -1606,7 +1622,7 @@ export default function Dashboard() {
                         return (
                           <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 shadow-sm space-y-3">
                             <div className="flex justify-between items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
-                              <span>Date: {matchedTrend.date}</span>
+                              <span>Date: {formatDateDDMMYYYY(matchedTrend.date)}</span>
                               <button onClick={() => { setSelectedCampaignDateFilter(getDateKey(matchedTrend.date) || matchedTrend.date); setActiveTab('all-campaigns'); }} className="text-blue-600 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-full transition">View Day-wise Campaigns &rarr;</button>
                             </div>
                             <div className="grid grid-cols-3 gap-3 text-center">
@@ -2155,23 +2171,26 @@ export default function Dashboard() {
                     <button onClick={() => fetchData(false)} className="text-xs font-semibold text-blue-600 hover:underline">Refresh List</button>
                   </div>
 
-                  {/* Horizontal Date Scroller Filter for All Campaigns (Excluding 'All' option so it defaults to latest date) */}
+                  {/* Horizontal Date Scroller Filter for All Campaigns (Current/Past dates only, sorted descending with latest first, formatted dd-mm-yyyy) */}
                   <div className="px-4 flex items-center gap-2 overflow-x-auto pb-2">
                     {(() => {
                       const trends = analytics?.dailyTrends || [];
+                      const todayKey = getDateKey(new Date());
                       const dateKeysSet = new Set();
                       campaigns.forEach(c => {
                         const k = getDateKey(c.sentAt);
-                        if (k) dateKeysSet.add(k);
+                        if (k && k <= todayKey) dateKeysSet.add(k);
                       });
                       trends.forEach(t => {
                         const k = getDateKey(t.date);
-                        if (k) dateKeysSet.add(k);
+                        if (k && k <= todayKey) dateKeysSet.add(k);
                       });
+                      // Sort descending so the latest/newest date appears first
                       const uniqueDates = Array.from(dateKeysSet).sort((a, b) => new Date(b) - new Date(a));
 
                       return uniqueDates.map((dateKey) => {
                         const isSelected = selectedCampaignDateFilter === dateKey;
+                        const displayDate = formatDateDDMMYYYY(dateKey);
                         return (
                           <button
                             key={dateKey}
@@ -2180,7 +2199,7 @@ export default function Dashboard() {
                               isSelected ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                             }`}
                           >
-                            {dateKey}
+                            {displayDate}
                           </button>
                         );
                       });
@@ -2243,7 +2262,7 @@ export default function Dashboard() {
 
                               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
                                 <h5 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                                  Recipient Delivery Details ({campaignLogs.length} emails dispatched {selectedCampaignDateFilter ? `on ${selectedCampaignDateFilter}` : ''})
+                                  Recipient Delivery Details ({campaignLogs.length} emails dispatched {selectedCampaignDateFilter ? `on ${formatDateDDMMYYYY(selectedCampaignDateFilter)}` : ''})
                                 </h5>
                                 {campaignLogs.length > 0 ? (
                                   <div className="overflow-x-auto">
@@ -2302,25 +2321,27 @@ export default function Dashboard() {
             {activeTab === 'analytics' && (
               <motion.div key="analytics" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
                 
-                {/* Horizontal Date Scroller for Analytics Tab */}
+                {/* Horizontal Date Scroller for Analytics Tab (Sorted descending, formatted dd-mm-yyyy) */}
                 <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
                   <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Select Analytics Date Report</h4>
                   <div className="flex items-center gap-2 overflow-x-auto pb-1">
                     {(() => {
                       const trends = analytics?.dailyTrends || [];
-                      const dateKeysSet = new Set(['All']);
+                      const todayKey = getDateKey(new Date());
+                      const dateKeysSet = new Set();
                       trends.forEach(t => {
                         const k = getDateKey(t.date);
-                        if (k) dateKeysSet.add(k);
+                        if (k && k <= todayKey) dateKeysSet.add(k);
                       });
                       (analytics?.logs || []).forEach(l => {
                         const k = getDateKey(l.sentAt);
-                        if (k) dateKeysSet.add(k);
+                        if (k && k <= todayKey) dateKeysSet.add(k);
                       });
-                      const uniqueDates = Array.from(dateKeysSet);
+                      const uniqueDates = ['All', ...Array.from(dateKeysSet).sort((a, b) => new Date(b) - new Date(a))];
 
                       return uniqueDates.map((dateKey) => {
                         const isSelected = selectedAnalyticsDateFilter === dateKey;
+                        const displayDate = dateKey === 'All' ? 'All Dates' : formatDateDDMMYYYY(dateKey);
                         return (
                           <button
                             key={dateKey}
@@ -2329,7 +2350,7 @@ export default function Dashboard() {
                               isSelected ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                             }`}
                           >
-                            {dateKey === 'All' ? 'All Dates' : dateKey}
+                            {displayDate}
                           </button>
                         );
                       });
