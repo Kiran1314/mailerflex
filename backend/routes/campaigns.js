@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import nodemailer from 'nodemailer';
 import path from 'path';
 import fs from 'fs';
+import cron from 'node-cron';
 
 const router = express.Router();
 
@@ -14,7 +15,8 @@ const CampaignSchema = new mongoose.Schema({
   htmlContent: String,
   cc: String,
   bcc: String,
-  status: { type: String, default: 'Sent' },
+  status: { type: String, enum: ['Scheduled', 'Processing', 'Sent', 'Cancelled'], default: 'Sent' },
+  scheduledAt: { type: Date, default: null },
   sentAt: { type: Date, default: Date.now }
 });
 
@@ -32,11 +34,12 @@ const CampaignLogSchema = new mongoose.Schema({
 
 const ContactSchema = new mongoose.Schema({
   name: String,
-  email: String,
+  email: { type: String, required: true },
   company: String,
   mobile: String,
   industry: String,
-  group: String
+  group: String,
+  status: { type: String, enum: ['Active', 'Invalid', 'Unverified'], default: 'Active' }
 });
 
 const SenderSchema = new mongoose.Schema({
@@ -51,6 +54,149 @@ const CampaignLog = mongoose.models.CampaignLog || mongoose.model('CampaignLog',
 const Contact = mongoose.models.Contact || mongoose.model('Contact', ContactSchema);
 const Sender = mongoose.models.Sender || mongoose.model('Sender', SenderSchema);
 
+// Reusable Background Campaign Dispatch Worker (Used by both immediate send and cron scheduler)
+async function processCampaignExecution(camp) {
+  try {
+    const senderRecord = await Sender.findOne({ email: camp.senderEmail });
+    if (!senderRecord) {
+      console.error(`Background Dispatch Error: Sender configuration for ${camp.senderEmail} not found.`);
+      camp.status = 'Cancelled';
+      await camp.save();
+      return;
+    }
+
+    // Fetch contacts matching group and filter only Active verified emails to prevent bounces
+    const contacts = await Contact.find({ 
+      group: { $regex: new RegExp(`^${camp.group}$`, 'i') },
+      status: 'Active' 
+    });
+
+    if (contacts.length === 0) {
+      console.error(`Background Dispatch Error: No active verified contacts found in group "${camp.group}".`);
+      camp.status = 'Cancelled';
+      await camp.save();
+      return;
+    }
+
+    const portNum = Number(senderRecord.port) || 465;
+    const isSecure = portNum === 465;
+
+    let processedHtml = camp.htmlContent || '';
+    let attachments = [];
+    
+    const imgRegex = /src="(?:https?:\/\/[^/]+)?(\/signatures\/[^"]+)"/g;
+    let match;
+    
+    while ((match = imgRegex.exec(camp.htmlContent)) !== null) {
+      const fullMatchTag = match[0];
+      const relativePath = match[1];
+      const localFilePath = path.join(process.cwd(), relativePath);
+
+      if (fs.existsSync(localFilePath)) {
+        const uniqueCid = `sig-${Date.now()}-${Math.floor(Math.random() * 1000)}@mailer.local`;
+        processedHtml = processedHtml.replace(fullMatchTag, `src="cid:${uniqueCid}"`);
+        
+        attachments.push({
+          filename: path.basename(localFilePath),
+          path: localFilePath,
+          cid: uniqueCid
+        });
+      }
+    }
+
+    camp.status = 'Sent';
+    camp.sentAt = new Date();
+    await camp.save();
+
+    for (const contact of contacts) {
+      const transporter = nodemailer.createTransport({
+        host: senderRecord.host || 'smtp.hostinger.com',
+        port: portNum,
+        secure: isSecure,
+        auth: { user: senderRecord.email, pass: senderRecord.password },
+        tls: { rejectUnauthorized: false },
+        pool: true,
+        maxConnections: 1,
+        maxMessages: 100
+      });
+
+      const logRecord = await CampaignLog.create({
+        campaignTitle: camp.title || camp.subject || 'Untitled Campaign',
+        senderEmail: senderRecord.email,
+        recipientEmail: contact.email,
+        status: 'Sent',
+        opened: false,
+        clicked: false,
+        unsubscribed: false
+      });
+
+      let personalizedHtml = processedHtml
+        .replace(/{{name}}/g, contact.name || 'Valued Client')
+        .replace(/{{email}}/g, contact.email || '')
+        .replace(/{{company}}/g, contact.company || 'Your Company')
+        .replace(/{{mobile}}/g, contact.mobile || '')
+        .replace(/{{industry}}/g, contact.industry || '');
+
+      personalizedHtml = personalizedHtml.replace(/href="([^"]+)"/g, (m, origUrl) => {
+        if (origUrl.includes('https://mailer.ibcstudio.com/api/analytics')) return m;
+        const clickTrackerUrl = `https://mailer.ibcstudio.com/api/analytics/click?id=${logRecord._id}&url=${encodeURIComponent(origUrl)}`;
+        return `href="${clickTrackerUrl}"`;
+      });
+
+      const openTrackerUrl = `https://mailer.ibcstudio.com/api/analytics/open/${logRecord._id}`;
+      const unsubscribeUrl = `https://mailer.ibcstudio.com/api/analytics/unsubscribe/${logRecord._id}`;
+
+      personalizedHtml += `<img src="${openTrackerUrl}" width="1" height="1" style="display:none;" alt="" />`;
+      personalizedHtml += `<br><p style="font-size: 11px; color: #888; text-align: center; margin-top: 20px;">Don't want these emails anymore? <a href="${unsubscribeUrl}" style="color: #555; text-decoration: underline;">Unsubscribe here</a>.</p>`;
+
+      try {
+        let mailOptions = {
+          from: `"IBC Studio" <${senderRecord.email}>`,
+          to: contact.email,
+          subject: camp.subject || 'Update from our Team',
+          html: personalizedHtml,
+          attachments: attachments
+        };
+
+        if (camp.cc && camp.cc.trim() !== '') mailOptions.cc = camp.cc.trim();
+        if (camp.bcc && camp.bcc.trim() !== '') mailOptions.bcc = camp.bcc.trim();
+
+        await transporter.sendMail(mailOptions);
+        await CampaignLog.findByIdAndUpdate(logRecord._id, { status: 'Delivered' });
+      } catch (mailErr) {
+        console.error(`SMTP Dispatch Failed for ${contact.email}:`, mailErr.message);
+        await CampaignLog.findByIdAndUpdate(logRecord._id, {
+          status: 'Bounced',
+          errorDetails: mailErr.message
+        });
+      } finally {
+        transporter.close();
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
+  } catch (err) {
+    console.error('Execution Worker Error:', err);
+  }
+}
+
+// BACKGROUND CRON JOB: Checks every minute for due scheduled campaigns
+cron.schedule('* * * * *', async () => {
+  try {
+    const now = new Date();
+    const dueCampaigns = await Campaign.find({ status: 'Scheduled', scheduledAt: { $lte: now } });
+
+    for (const camp of dueCampaigns) {
+      camp.status = 'Processing';
+      await camp.save();
+      processCampaignExecution(camp);
+    }
+  } catch (cronErr) {
+    console.error('Cron Job Execution Error:', cronErr);
+  }
+});
+
+// DISPATCH CAMPAIGN IMMEDIATELY
 router.post('/send', async (req, res) => {
   console.log('Incoming Campaign Dispatch Request:', req.body);
   const { title, subject, group, senderEmail, htmlContent, cc, bcc } = req.body;
@@ -68,119 +214,27 @@ router.post('/send', async (req, res) => {
       return res.status(400).json({ error: `Sender configuration for ${senderEmail} not found in database.` });
     }
 
-    const contacts = await Contact.find({ group: { $regex: new RegExp(`^${group}$`, 'i') } });
-    if (contacts.length === 0) {
-      return res.status(400).json({ error: `No contacts found in group "${group}".` });
+    const activeContactsCount = await Contact.countDocuments({ group: { $regex: new RegExp(`^${group}$`, 'i') }, status: 'Active' });
+    if (activeContactsCount === 0) {
+      return res.status(400).json({ error: `No active verified contacts found in group "${group}". Please run email verification first.` });
     }
 
-    // 1. Immediately save the Campaign document so it shows up in history instantly
-    const campaign = new Campaign({ title: title || subject || 'Broadcast', subject, group, senderEmail, htmlContent, cc, bcc });
+    const campaign = new Campaign({ 
+      title: title || subject || 'Broadcast', 
+      subject, 
+      group, 
+      senderEmail, 
+      htmlContent, 
+      cc, 
+      bcc, 
+      status: 'Sent' 
+    });
     await campaign.save();
 
-    // 2. Respond immediately to the client to prevent gateway 504 timeout on production
-    res.status(200).json({ message: `Campaign broadcast queued successfully for ${contacts.length} recipients!` });
+    res.status(200).json({ message: `Campaign broadcast queued successfully for ${activeContactsCount} active recipients!` });
 
-    // 3. Process SMTP transmission asynchronously in the background queue with connection rotation & pacing for 1500+ emails
     setImmediate(async () => {
-      try {
-        const portNum = Number(senderRecord.port) || 465;
-        const isSecure = portNum === 465;
-
-        let processedHtml = htmlContent || '';
-        let attachments = [];
-        
-        const imgRegex = /src="(?:https?:\/\/[^/]+)?(\/signatures\/[^"]+)"/g;
-        let match;
-        
-        while ((match = imgRegex.exec(htmlContent)) !== null) {
-          const fullMatchTag = match[0];
-          const relativePath = match[1];
-          const localFilePath = path.join(process.cwd(), relativePath);
-
-          if (fs.existsSync(localFilePath)) {
-            const uniqueCid = `sig-${Date.now()}-${Math.floor(Math.random() * 1000)}@mailer.local`;
-            processedHtml = processedHtml.replace(fullMatchTag, `src="cid:${uniqueCid}"`);
-            
-            attachments.push({
-              filename: path.basename(localFilePath),
-              path: localFilePath,
-              cid: uniqueCid
-            });
-          }
-        }
-
-        // Process recipient emails sequentially with connection pooling and pacing to prevent socket drops across 1500+ lists
-        for (const contact of contacts) {
-          const transporter = nodemailer.createTransport({
-            host: senderRecord.host || 'smtp.hostinger.com',
-            port: portNum,
-            secure: isSecure,
-            auth: { user: senderRecord.email, pass: senderRecord.password },
-            tls: { rejectUnauthorized: false },
-            pool: true,
-            maxConnections: 1,
-            maxMessages: 100 // Rotate connection every 100 emails to keep socket alive and prevent timeouts
-          });
-
-          const logRecord = await CampaignLog.create({
-            campaignTitle: title || subject || 'Untitled Campaign',
-            senderEmail: senderRecord.email,
-            recipientEmail: contact.email,
-            status: 'Sent',
-            opened: false,
-            clicked: false,
-            unsubscribed: false
-          });
-
-          let personalizedHtml = processedHtml
-            .replace(/{{name}}/g, contact.name || 'Valued Client')
-            .replace(/{{email}}/g, contact.email || '')
-            .replace(/{{company}}/g, contact.company || 'Your Company')
-            .replace(/{{mobile}}/g, contact.mobile || '')
-            .replace(/{{industry}}/g, contact.industry || '');
-
-          personalizedHtml = personalizedHtml.replace(/href="([^"]+)"/g, (m, origUrl) => {
-            if (origUrl.includes('https://mailer.ibcstudio.com/api/analytics')) return m;
-            const clickTrackerUrl = `https://mailer.ibcstudio.com/api/analytics/click?id=${logRecord._id}&url=${encodeURIComponent(origUrl)}`;
-            return `href="${clickTrackerUrl}"`;
-          });
-
-          const openTrackerUrl = `https://mailer.ibcstudio.com/api/analytics/open/${logRecord._id}`;
-          const unsubscribeUrl = `https://mailer.ibcstudio.com/api/analytics/unsubscribe/${logRecord._id}`;
-
-          personalizedHtml += `<img src="${openTrackerUrl}" width="1" height="1" style="display:none;" alt="" />`;
-          personalizedHtml += `<br><p style="font-size: 11px; color: #888; text-align: center; margin-top: 20px;">Don't want these emails anymore? <a href="${unsubscribeUrl}" style="color: #555; text-decoration: underline;">Unsubscribe here</a>.</p>`;
-
-          try {
-            let mailOptions = {
-              from: `"IBC Studio" <${senderRecord.email}>`,
-              to: contact.email,
-              subject: subject || 'Update from our Team',
-              html: personalizedHtml,
-              attachments: attachments
-            };
-
-            if (cc && cc.trim() !== '') mailOptions.cc = cc.trim();
-            if (bcc && bcc.trim() !== '') mailOptions.bcc = bcc.trim();
-
-            await transporter.sendMail(mailOptions);
-            await CampaignLog.findByIdAndUpdate(logRecord._id, { status: 'Delivered' });
-          } catch (mailErr) {
-            console.error(`SMTP Dispatch Failed for ${contact.email}:`, mailErr.message);
-            await CampaignLog.findByIdAndUpdate(logRecord._id, {
-              status: 'Bounced',
-              errorDetails: mailErr.message
-            });
-          } finally {
-            transporter.close();
-          }
-
-          // Controlled 400ms delay per email ensures all 1500+ emails dispatch safely without hitting SMTP rate limits or dropping connections
-          await new Promise(resolve => setTimeout(resolve, 400));
-        }
-      } catch (bgErr) {
-        console.error('Background Campaign Dispatch Error:', bgErr);
-      }
+      await processCampaignExecution(campaign);
     });
 
   } catch (err) {
@@ -189,9 +243,97 @@ router.post('/send', async (req, res) => {
   }
 });
 
+// SCHEDULE A NEW CAMPAIGN (Allows current day & future scheduling)
+router.post('/schedule', async (req, res) => {
+  try {
+    const { title, subject, group, senderEmail, htmlContent, cc, bcc, scheduledAt } = req.body;
+    
+    if (!scheduledAt) {
+      return res.status(400).json({ error: 'Scheduled date and time is required.' });
+    }
+
+    const scheduledDate = new Date(scheduledAt);
+    if (scheduledDate.getTime() < Date.now() - 30000) {
+      return res.status(400).json({ error: 'Scheduled time cannot be in the past.' });
+    }
+
+    const campaign = new Campaign({
+      title: title || subject || 'Scheduled Broadcast',
+      subject,
+      group,
+      senderEmail,
+      htmlContent,
+      cc,
+      bcc,
+      status: 'Scheduled',
+      scheduledAt: scheduledDate,
+      sentAt: scheduledDate
+    });
+
+    await campaign.save();
+    res.status(200).json({ message: 'Campaign successfully scheduled!', campaign });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// UPDATE / RESCHEDULE A SCHEDULED CAMPAIGN
+router.put('/schedule/:id', async (req, res) => {
+  try {
+    const { title, subject, group, senderEmail, htmlContent, cc, bcc, scheduledAt } = req.body;
+    const campaign = await Campaign.findById(req.params.id);
+
+    if (!campaign || campaign.status !== 'Scheduled') {
+      return res.status(404).json({ error: 'Scheduled campaign not found or already dispatched.' });
+    }
+
+    campaign.title = title || campaign.title;
+    campaign.subject = subject || campaign.subject;
+    campaign.group = group || campaign.group;
+    campaign.senderEmail = senderEmail || campaign.senderEmail;
+    campaign.htmlContent = htmlContent || campaign.htmlContent;
+    campaign.cc = cc;
+    campaign.bcc = bcc;
+    
+    if (scheduledAt) {
+      const scheduledDate = new Date(scheduledAt);
+      if (scheduledDate.getTime() < Date.now() - 30000) {
+        return res.status(400).json({ error: 'Scheduled time cannot be in the past.' });
+      }
+      campaign.scheduledAt = scheduledDate;
+      campaign.sentAt = scheduledDate;
+    }
+
+    await campaign.save();
+    res.status(200).json({ message: 'Scheduled campaign updated successfully!', campaign });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE / CANCEL A SCHEDULED CAMPAIGN
+router.delete('/schedule/:id', async (req, res) => {
+  try {
+    const campaign = await Campaign.findById(req.params.id);
+    if (!campaign) {
+      return res.status(404).json({ error: 'Scheduled campaign not found.' });
+    }
+
+    if (campaign.status === 'Scheduled') {
+      await Campaign.findByIdAndDelete(req.params.id);
+      return res.status(200).json({ message: 'Scheduled campaign cancelled and deleted successfully.' });
+    }
+
+    res.status(400).json({ error: 'Only pending scheduled campaigns can be deleted.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET ALL CAMPAIGNS (Including scheduledAt and sentAt details for frontend tables)
 router.get('/', async (req, res) => {
   try {
-    const campaigns = await Campaign.find().sort({ sentAt: -1 });
+    const campaigns = await Campaign.find().sort({ scheduledAt: -1, sentAt: -1 });
     res.json(campaigns);
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -8,13 +8,13 @@ const router = express.Router();
 const upload = multer({ dest: 'uploads/' });
 
 const ContactSchema = new mongoose.Schema({
-  email: { type: String, required: true, unique: true },
   name: String,
+  email: { type: String, required: true },
   company: String,
   mobile: String,
   industry: String,
-  group: { type: String, default: 'General' },
-  createdAt: { type: Date, default: Date.now }
+  group: String,
+  status: { type: String, enum: ['Active', 'Invalid', 'Unverified'], default: 'Active' }
 });
 
 const Contact = mongoose.models.Contact || mongoose.model('Contact', ContactSchema);
@@ -156,6 +156,35 @@ router.delete('/group/all', async (req, res) => {
       group: { $regex: new RegExp(`^${group}$`, 'i') } 
     });
     res.json({ message: `Successfully deleted ${result.deletedCount} contacts from group [${group}].` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Email Verification Endpoint
+router.post('/verify-emails', async (req, res) => {
+  try {
+    const contacts = await Contact.find({});
+    let activeCount = 0;
+    let invalidCount = 0;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    for (const contact of contacts) {
+      if (contact.email && emailRegex.test(contact.email.trim())) {
+        contact.status = 'Active';
+        activeCount++;
+      } else {
+        contact.status = 'Invalid';
+        invalidCount++;
+      }
+      await contact.save();
+    }
+
+    res.status(200).json({ 
+      message: `Verification complete! Found ${activeCount} active emails and ${invalidCount} invalid emails.`,
+      activeCount,
+      invalidCount
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

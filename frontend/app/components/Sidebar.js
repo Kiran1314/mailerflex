@@ -1,19 +1,21 @@
 'use client';
 import { useState } from 'react';
-import { 
-  LayoutDashboard, Users, Mail, Layers, FileText, PenTool, BarChart3, 
-  Inbox, Send, Archive, Trash, ChevronDown, ChevronRight, AtSign, FileCode 
+import {  
+  LayoutDashboard, Users, Mail, Layers, FileText, PenTool, BarChart3,  
+  Inbox, Send, Archive, Trash, ChevronDown, ChevronRight, AtSign, FileCode, Clock 
 } from 'lucide-react';
 
-export default function Sidebar({ 
-  activeTab, 
-  setActiveTab, 
-  senders, 
-  selectedWebmailSender, 
-  setSelectedWebmailSender, 
-  activeFolder, 
-  setActiveFolder, 
-  unreadWebmailCount 
+export default function Sidebar({  
+  activeTab,  
+  setActiveTab,  
+  senders,  
+  selectedWebmailSender,  
+  setSelectedWebmailSender,  
+  activeFolder,  
+  setActiveFolder,  
+  unreadWebmailCount,
+  scheduledCampaignsCount = 0,
+  isProcessingCampaign = false
 }) {
   // Track multiple expanded senders using their unique _id
   const [expandedSenderIds, setExpandedSenderIds] = useState({});
@@ -39,18 +41,18 @@ export default function Sidebar({
   return (
     <aside className="w-64 bg-white border-r border-slate-200 flex flex-col h-full">
       <div className="p-6 border-b border-slate-100">
-        <h2 className="text-xl font-black bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">MailerFlex SaaS</h2>
+        <h2 className="text-xl font-black bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">MailerFlex Cloud</h2>
       </div>
 
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-        <button 
+        <button  
           onClick={() => setActiveTab('dashboard')} 
           className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}
         >
           <LayoutDashboard size={16} /> Dashboard
         </button>
 
-        <button 
+        <button  
           onClick={() => setActiveTab('contacts')} 
           className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition ${activeTab === 'contacts' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}
         >
@@ -111,43 +113,61 @@ export default function Sidebar({
         })}
 
         <div className="pt-3 pb-1 text-[10px] font-extrabold uppercase text-slate-400 tracking-wider px-3">Campaigns & Mass Mail</div>
-        <button 
+        <button  
           onClick={() => setActiveTab('new-campaign')} 
           className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition ${activeTab === 'new-campaign' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}
         >
           <Mail size={16} /> New Campaign
         </button>
-        <button 
+        <button  
           onClick={() => setActiveTab('all-campaigns')} 
           className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition ${activeTab === 'all-campaigns' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}
         >
           <Layers size={16} /> All Campaigns
         </button>
 
+        {/* Scheduled Campaigns Link with Alert LED Light Indicator */}
+        <button  
+          onClick={() => setActiveTab('scheduled-campaigns')} 
+          className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-xs font-bold transition ${activeTab === 'scheduled-campaigns' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}
+        >
+          <div className="flex items-center gap-3">
+            <Clock size={16} /> Scheduled Queue
+          </div>
+          <div className="flex items-center gap-1.5" title={isProcessingCampaign ? "Campaign processing active" : "Campaign scheduled"}>
+            <span className={`w-2.5 h-2.5 rounded-full ${isProcessingCampaign ? 'bg-emerald-500 animate-ping' : scheduledCampaignsCount > 0 ? 'bg-amber-500 animate-pulse' : 'bg-slate-300'}`}></span>
+            {scheduledCampaignsCount > 0 && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${activeTab === 'scheduled-campaigns' ? 'bg-blue-500 text-white' : 'bg-amber-100 text-amber-800'}`}>
+                {scheduledCampaignsCount}
+              </span>
+            )}
+          </div>
+        </button>
+
         <div className="pt-3 pb-1 text-[10px] font-extrabold uppercase text-slate-400 tracking-wider px-3">Configuration & Data</div>
         
-        <button 
+        <button  
           onClick={() => setActiveTab('templates-mgr')} 
           className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition ${activeTab === 'templates-mgr' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}
         >
           <FileCode size={16} /> Templates
         </button>
 
-        <button 
+        <button  
           onClick={() => setActiveTab('signatures-mgr')} 
           className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition ${activeTab === 'signatures-mgr' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}
         >
           <FileText size={16} /> Signatures
         </button>
 
-        <button 
+        <button  
           onClick={() => setActiveTab('senders-mgr')} 
           className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition ${activeTab === 'senders-mgr' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}
         >
           <AtSign size={16} /> Sender Emails
         </button>
 
-        <button 
+        <button  
           onClick={() => setActiveTab('analytics')} 
           className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition ${activeTab === 'analytics' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}
         >

@@ -9,7 +9,7 @@ import EmailEditor from './components/EmailEditor';
 import { 
   Upload, Send, CheckCircle, BellRing, Users, Mail, Layers, FileText, 
   PenTool, AtSign, BarChart3, AlertTriangle, Trash2, Search, ChevronLeft, 
-  ChevronRight, Download, RefreshCw, Edit3, Menu, X, LogOut, RotateCcw, Tag, Eye, MousePointer, Save, Reply, Forward 
+  ChevronRight, Download, RefreshCw, Edit3, Menu, X, LogOut, RotateCcw, Tag, Eye, MousePointer, Save, Reply, Forward, Clock 
 } from 'lucide-react';
 
 const CHART_COLORS = ['#3b82f6', '#10b981', '#6366f1', '#f43f5e'];
@@ -91,7 +91,7 @@ export default function Dashboard() {
   const [selectedWebmailIds, setSelectedWebmailIds] = useState([]);
 
   // Outlook-style Inline Reply/Forward States in Reading Pane
-  const [replyMode, setReplyMode] = useState(null); // 'reply' | 'forward' | null
+  const [replyMode, setReplyMode] = useState(null);
   const [inlineReplyForm, setInlineReplyForm] = useState({ to: '', subject: '', bodyHtml: '' });
 
   // Resizable split view mousemove handler
@@ -115,13 +115,9 @@ export default function Dashboard() {
     };
   }, [isResizing]);
 
-  // Individual Email Composer State (including draftId support)
   const [composeForm, setComposeForm] = useState({ draftId: null, to: '', subject: '', cc: '', bcc: '', bodyHtml: '' });
-
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-   
-  // Ref for outside click detection on notification popover
   const notificationRef = useRef(null);
 
   useEffect(() => {
@@ -134,7 +130,6 @@ export default function Dashboard() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Live Webmail Polling Effect
   useEffect(() => {
     if (activeTab === 'webmail' && selectedWebmailSender) {
       const webmailPoll = setInterval(() => {
@@ -159,28 +154,18 @@ export default function Dashboard() {
   const [file, setFile] = useState(null);
   const [notification, setNotification] = useState(null);
 
-  // Unread notification counter & sound trigger reference
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const prevLogsCountRef = useRef(0);
 
-  // Delivery Date Filter State
   const [selectedDeliveryDate, setSelectedDeliveryDate] = useState('Today');
-
-  // All Campaigns Date Filter State
   const [selectedCampaignDateFilter, setSelectedCampaignDateFilter] = useState('');
-
-  // Analytics Tab Date Filter State
   const [selectedAnalyticsDateFilter, setSelectedAnalyticsDateFilter] = useState('All');
-
-  // Analytics Logs Search / Filter State
   const [logSearchTerm, setLogSearchTerm] = useState('');
   const [logStatusFilter, setLogStatusFilter] = useState('All');
 
-  // Sending Progress State
   const [isSending, setIsSending] = useState(false);
   const [sendProgress, setSendProgress] = useState({ current: 0, total: 100 });
 
-  // Contact CRUD & Table State
   const [contactForm, setContactForm] = useState({ 
     name: '', email: '', company: '', mobile: '', industry: '', group: 'General' 
   });
@@ -191,11 +176,9 @@ export default function Dashboard() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 8;
 
-  // Analytics Logs Pagination State
   const [logPage, setLogPage] = useState(1);
   const logsPerPage = 8;
 
-  // Sender Form State
   const [senderForm, setSenderForm] = useState({ 
     id: null, 
     email: '', 
@@ -207,17 +190,14 @@ export default function Dashboard() {
     incomingProtocol: 'POP3'
   });
 
-  // Template Manager State
   const [templateForm, setTemplateForm] = useState({
     id: null, title: '', subject: '', htmlContent: '<p>Hello {{name}},</p><p><br></p><p>Check out our latest update for {{company}}.</p>', isDefault: false
   });
 
-  // Signature Manager State
   const [selectedSigEmail, setSelectedSigEmail] = useState('');
   const [signatureHtml, setSignatureHtml] = useState('<p>Best Regards,<br>Team</p>');
   const [sigFile, setSigFile] = useState(null);
 
-  // Campaign Form State
   const [campaignData, setCampaignData] = useState({
     title: '',
     subject: '',
@@ -232,7 +212,6 @@ export default function Dashboard() {
   const campaignDataRef = useRef(campaignData);
   campaignDataRef.current = campaignData;
 
-  // Automatically default campaign date filter to latest available current/past date (excluding future dates)
   useEffect(() => {
     if (campaigns.length > 0 && !selectedCampaignDateFilter) {
       const todayKey = getDateKey(new Date());
@@ -244,7 +223,6 @@ export default function Dashboard() {
     }
   }, [campaigns, selectedCampaignDateFilter]);
 
-  // Play subtle audio chime for real-time updates
   const playNotificationChime = () => {
     try {
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -259,9 +237,7 @@ export default function Dashboard() {
       gain.connect(audioCtx.destination);
       osc.start();
       osc.stop(audioCtx.currentTime + 0.4);
-    } catch (e) {
-      // AudioContext blocked
-    }
+    } catch (e) {}
   };
 
   const fetchData = async (isInitial = false) => {
@@ -329,7 +305,6 @@ export default function Dashboard() {
     return () => clearInterval(pollInterval);
   }, []);
 
-  // Fetch webmail messages whenever active webmail sender or folder changes
   useEffect(() => {
     if (selectedWebmailSender) {
       axios.get(`/api/webmail/${selectedWebmailSender}/${activeFolder}`)
@@ -343,7 +318,6 @@ export default function Dashboard() {
     }
   }, [selectedWebmailSender, activeFolder]);
 
-  // Handle Individual Email Send with Signature & Personalization Tags
   const handleSendIndividualEmail = async (e) => {
     e.preventDefault();
     try {
@@ -372,7 +346,6 @@ export default function Dashboard() {
     }
   };
 
-  // Handler to Submit Inline Reply or Forward with Sender Signature Appended Automatically
   const handleSendInlineReply = async (e) => {
     e.preventDefault();
     if (!inlineReplyForm.to || !inlineReplyForm.bodyHtml) {
@@ -398,7 +371,6 @@ export default function Dashboard() {
     }
   };
 
-  // Save Email as Draft Handler
   const handleSaveAsDraft = async () => {
     if (!composeForm.to && !composeForm.subject && !composeForm.bodyHtml) {
       return triggerNotification('Draft is empty.');
@@ -426,7 +398,6 @@ export default function Dashboard() {
     setComposeForm(prev => ({ ...prev, bodyHtml: prev.bodyHtml + ` ${tag} ` }));
   };
 
-  // Lead Stage Updater
   const handleUpdateLeadStage = async (msgId, newStage) => {
     try {
       await axios.patch(`/api/webmail/message/${msgId}`, { leadStage: newStage });
@@ -602,34 +573,34 @@ export default function Dashboard() {
 
   const analyticsSummary = useMemo(() => {
     const trends = analytics?.dailyTrends || [];
-    if (selectedAnalyticsDateFilter !== 'All') {
-      const matchedTrend = trends.find(t => getDateKey(t.date) === selectedAnalyticsDateFilter || t.date === selectedAnalyticsDateFilter);
-      if (matchedTrend) {
-        const totalDelivered = matchedTrend.delivered || 0;
-        const totalSent = matchedTrend.sent || 0;
-        const totalBounced = matchedTrend.bounced || 0;
-        const deliveryRate = totalSent > 0 ? ((totalDelivered / totalSent) * 100).toFixed(1) : 0;
-        const totalOpened = matchedTrend.opened || (analytics?.logs || []).filter(l => getDateKey(l.sentAt) === selectedAnalyticsDateFilter && l.opened).length;
-        const totalClicked = matchedTrend.clicked || (analytics?.logs || []).filter(l => getDateKey(l.sentAt) === selectedAnalyticsDateFilter && l.clicked).length;
-        const totalUnsubscribed = matchedTrend.unsubscribed || (analytics?.logs || []).filter(l => getDateKey(l.sentAt) === selectedAnalyticsDateFilter && l.unsubscribed).length;
-        
-        const openRate = totalSent > 0 ? ((totalOpened / totalSent) * 100).toFixed(1) : 0;
-        const clickRate = totalSent > 0 ? ((totalClicked / totalSent) * 100).toFixed(1) : 0;
-        const unsubscribeRate = totalSent > 0 ? ((totalUnsubscribed / totalSent) * 100).toFixed(1) : 0;
+    const allLogs = analytics?.logs || [];
 
-        return {
-          totalDelivered,
-          totalSent,
-          totalBounced,
-          deliveryRate,
-          totalOpened,
-          totalClicked,
-          totalUnsubscribed,
-          openRate,
-          clickRate,
-          unsubscribeRate
-        };
-      }
+    if (selectedAnalyticsDateFilter !== 'All') {
+      const matchedLogsForDate = allLogs.filter(l => getDateKey(l.sentAt) === selectedAnalyticsDateFilter);
+      const totalSent = matchedLogsForDate.length;
+      const totalDelivered = matchedLogsForDate.filter(l => l.status === 'Delivered').length;
+      const totalBounced = matchedLogsForDate.filter(l => l.status === 'Bounced' || l.status === 'Failed').length;
+      const totalOpened = matchedLogsForDate.filter(l => l.opened).length;
+      const totalClicked = matchedLogsForDate.filter(l => l.clicked).length;
+      const totalUnsubscribed = matchedLogsForDate.filter(l => l.unsubscribed).length;
+
+      const deliveryRate = totalSent > 0 ? ((totalDelivered / totalSent) * 100).toFixed(1) : 0;
+      const openRate = totalSent > 0 ? ((totalOpened / totalSent) * 100).toFixed(1) : 0;
+      const clickRate = totalSent > 0 ? ((totalClicked / totalSent) * 100).toFixed(1) : 0;
+      const unsubscribeRate = totalSent > 0 ? ((totalUnsubscribed / totalSent) * 100).toFixed(1) : 0;
+
+      return {
+        totalDelivered,
+        totalSent,
+        totalBounced,
+        deliveryRate,
+        totalOpened,
+        totalClicked,
+        totalUnsubscribed,
+        openRate,
+        clickRate,
+        unsubscribeRate
+      };
     }
     return analytics?.summary || {};
   }, [analytics, selectedAnalyticsDateFilter]);
@@ -897,6 +868,10 @@ export default function Dashboard() {
     }
   }, [analytics, selectedDeliveryDate, contacts]);
 
+  const scheduledCampaignsCount = useMemo(() => {
+    return (campaigns || []).filter(c => c.status === 'Scheduled').length;
+  }, [campaigns]);
+
   return (
     <div className="flex h-screen w-full bg-slate-50 overflow-hidden relative">
       {/* Mobile Sidebar Overlay Backdrop */}
@@ -918,6 +893,7 @@ export default function Dashboard() {
           activeFolder={activeFolder}
           setActiveFolder={setActiveFolder}
           unreadWebmailCount={unreadWebmailCount}
+          scheduledCount={scheduledCampaignsCount}
         />
       </div>
 
@@ -977,6 +953,17 @@ export default function Dashboard() {
           </div>
            
           <div className="flex items-center gap-4 relative">
+            
+           {/* Scheduled Campaign Notification Status Icon alongside Bell Icon */}
+            <div 
+              onClick={() => setActiveTab('scheduled-campaigns')}
+              title={scheduledCampaignsCount > 0 ? `${scheduledCampaignsCount} campaign(s) scheduled` : "No campaigns currently scheduled"}
+              className="relative bg-slate-100 p-2.5 rounded-full text-slate-600 hover:bg-slate-200 cursor-pointer transition flex items-center justify-center"
+            >
+              <Clock size={18} className={scheduledCampaignsCount > 0 ? "text-amber-500" : "text-slate-400"} />
+              <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${scheduledCampaignsCount > 0 ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`} />
+            </div>
+
             {/* Notification Bell with Outside-Click Closable Popover */}
             <div className="relative" ref={notificationRef}>
               <div 
@@ -1063,7 +1050,6 @@ export default function Dashboard() {
            {/* WEBMAIL & CRM LEADS STAGES TAB */}
            {activeTab === 'webmail' && (
              <motion.div key="webmail" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-4 h-[calc(100vh-140px)] flex flex-col">
-               {/* Top Header Bar */}
                <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-200 shadow-sm shrink-0">
                  <div className="flex items-center gap-3">
                    <h3 className="font-extrabold text-slate-800 text-sm">
@@ -1086,7 +1072,6 @@ export default function Dashboard() {
                  </div>
                </div>
 
-               {/* Filter Tabs & Bulk Delete Action Bar */}
                <div className="flex items-center justify-between gap-2 shrink-0 flex-wrap">
                  <div className="flex items-center gap-2">
                    {[
@@ -1126,13 +1111,8 @@ export default function Dashboard() {
                  )}
                </div>
 
-               {/* Outlook / Gmail Split View Layout */}
                <div className="flex-1 flex bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm relative">
-                 
-                 {/* Left Pane: Stacked Email List with Pagination & Checkboxes */}
                  <div style={{ width: `${listWidth}px` }} className="flex flex-col border-r border-slate-200 bg-white h-full overflow-hidden shrink-0">
-                   
-                   {/* List Sub-header with Master Checkbox */}
                    <div className="p-3 border-b border-slate-100 bg-slate-50 flex justify-between items-center text-[11px] font-extrabold text-slate-400 uppercase tracking-wider shrink-0">
                      <div className="flex items-center gap-2">
                        {(() => {
@@ -1166,7 +1146,6 @@ export default function Dashboard() {
                      </div>
                    </div>
                    
-                   {/* Scrollable Rows */}
                    <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
                      {(() => {
                        const filtered = webmailMessages.filter(msg => {
@@ -1241,7 +1220,6 @@ export default function Dashboard() {
                                      <option value="Closed/Junk">Closed/Junk</option>
                                    </select>
 
-                                   {/* Quick Action Icons: Flag & Pin */}
                                    <div className="flex items-center gap-1.5 opacity-80 group-hover:opacity-100 transition">
                                      <button 
                                        onClick={async (e) => {
@@ -1250,9 +1228,7 @@ export default function Dashboard() {
                                          try {
                                            const res = await axios.patch(`/api/webmail/message/${msg._id}`, { isFlagged: nextFlag });
                                            setWebmailMessages(prev => prev.map(m => m._id === msg._id ? { ...m, isFlagged: res.data.isFlagged } : m));
-                                         } catch (err) {
-                                           console.error('Flag patch error:', err);
-                                         }
+                                         } catch (err) {}
                                        }}
                                        title="Flag Email"
                                        className={`p-1 rounded hover:bg-slate-200 text-xs ${msg.isFlagged ? 'text-amber-500 font-bold' : 'text-slate-400'}`}
@@ -1266,9 +1242,7 @@ export default function Dashboard() {
                                          try {
                                            const res = await axios.patch(`/api/webmail/message/${msg._id}`, { isPinned: nextPin });
                                            setWebmailMessages(prev => prev.map(m => m._id === msg._id ? { ...m, isPinned: res.data.isPinned } : m));
-                                         } catch (err) {
-                                           console.error('Pin patch error:', err);
-                                         }
+                                         } catch (err) {}
                                        }}
                                        title="Pin Email"
                                        className={`p-1 rounded hover:bg-slate-200 text-xs ${msg.isPinned ? 'text-blue-600 font-bold' : 'text-slate-400'}`}
@@ -1287,7 +1261,6 @@ export default function Dashboard() {
                      })()}
                    </div>
 
-                   {/* List Pagination Footer (30 items limit) */}
                    <div className="p-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-xs shrink-0">
                      {(() => {
                        const filtered = webmailMessages.filter(msg => {
@@ -1321,10 +1294,8 @@ export default function Dashboard() {
                        );
                      })()}
                    </div>
-
                  </div>
 
-                 {/* Resizable Divider Bar */}
                  <div
                    onMouseDown={() => setIsResizing(true)}
                    className="w-1.5 bg-slate-100 hover:bg-blue-400 cursor-col-resize transition shrink-0 relative flex items-center justify-center"
@@ -1333,11 +1304,9 @@ export default function Dashboard() {
                    <div className="w-0.5 h-8 bg-slate-300 rounded-full"></div>
                  </div>
 
-                 {/* Right Pane: Reading View */}
                  <div className="flex-1 flex flex-col bg-white h-full overflow-hidden">
                    {selectedEmail ? (
                      <div className="flex-1 flex flex-col h-full overflow-y-auto">
-                       {/* Reading Header */}
                        <div className="p-6 border-b border-slate-200 bg-slate-50/50 flex justify-between items-start gap-4">
                          <div className="space-y-1">
                            <h2 className="text-lg font-extrabold text-slate-900">{selectedEmail.subject || '(No Subject)'}</h2>
@@ -1363,11 +1332,9 @@ export default function Dashboard() {
                          </div>
                        </div>
 
-                       {/* Email Body Content */}
                        <div className="p-6 flex-1 overflow-y-auto prose prose-sm max-w-none text-slate-800 space-y-6">
                          <div dangerouslySetInnerHTML={{ __html: selectedEmail.bodyHtml || '<p class="text-slate-400 italic">No content body available.</p>' }} />
 
-                         {/* Outlook-Style Reply & Forward Action Buttons below content */}
                          <div className="flex items-center gap-3 pt-4 border-t border-slate-100">
                            <button
                              onClick={() => {
@@ -1403,7 +1370,6 @@ export default function Dashboard() {
                            </button>
                          </div>
 
-                         {/* Inline Reply / Forward Drawer with Sender's Signature */}
                          {replyMode && (
                            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3 mt-4 shadow-inner">
                              <div className="flex justify-between items-center border-b border-slate-200 pb-2">
@@ -1462,7 +1428,6 @@ export default function Dashboard() {
                              </form>
                            </div>
                          )}
-
                        </div>
                      </div>
                    ) : (
@@ -1473,12 +1438,11 @@ export default function Dashboard() {
                      </div>
                    )}
                  </div>
-
                </div>
              </motion.div>
            )}
 
-            {/* COMPOSE INDIVIDUAL EMAIL UNDER SENDER WITH SIGNATURES, TAGS & SAVE TO DRAFT */}
+            {/* COMPOSE INDIVIDUAL EMAIL TAB */}
             {activeTab === 'compose-individual' && (
               <motion.div key="compose-individual" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
@@ -1493,7 +1457,6 @@ export default function Dashboard() {
                     </button>
                   </div>
                    
-                  {/* Personalization Dropdown Tag Bar */}
                   <div className="flex gap-2 flex-wrap bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
                     <span className="font-bold text-slate-600 flex items-center gap-1"><Tag size={12}/> Insert Tag:</span>
                     {['{{name}}', '{{email}}', '{{company}}', '{{mobile}}'].map(tag => (
@@ -1518,7 +1481,7 @@ export default function Dashboard() {
               </motion.div>
             )}
 
-            {/* DASHBOARD */}
+            {/* DASHBOARD TAB */}
             {activeTab === 'dashboard' && (
               <motion.div key="dash" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
@@ -1561,12 +1524,11 @@ export default function Dashboard() {
                         <button onClick={() => setActiveTab('analytics')} className="text-xs font-semibold text-blue-600 hover:underline">View Analytics &rarr;</button>
                       </div>
 
-                      {/* Calendar-Style Date Filter Navigation Bar (Conditional Yesterday) */}
                       <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-100">
                         {(() => {
                           const trends = analytics?.dailyTrends || [];
                           const todayKey = getDateKey(new Date());
-                          
+                           
                           const yesterdayObj = new Date();
                           yesterdayObj.setDate(yesterdayObj.getDate() - 1);
                           const yesterdayKey = getDateKey(yesterdayObj);
@@ -1728,7 +1690,7 @@ export default function Dashboard() {
                     <div>
                       <h3 className="text-base font-bold text-slate-800 mb-1">Bulk CSV Upload</h3>
                       <p className="text-xs text-slate-500 mb-3">Upload your contact list using a formatted CSV file.</p>
-                      
+                       
                       <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600 space-y-1 mb-4">
                         <span className="font-bold uppercase text-[10px] text-blue-600 tracking-wider">Required CSV Headers:</span>
                         <p className="font-mono bg-white p-2 rounded border border-slate-200 text-slate-800 overflow-x-auto">name,email,company,mobile,industry,group</p>
@@ -1762,6 +1724,21 @@ export default function Dashboard() {
 
                     <div className="flex items-center gap-3 w-full sm:w-auto flex-wrap">
                       <button
+                        onClick={async () => {
+                          try {
+                            const res = await axios.post('/api/contacts/verify-emails');
+                            triggerNotification(res.data.message);
+                            fetchData(false);
+                          } catch (err) {
+                            triggerNotification('Email verification scan failed.');
+                          }
+                        }}
+                        className="bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+                      >
+                        <CheckCircle size={14} /> Verify All Contact Emails
+                      </button>
+
+                      <button
                         onClick={handleExportCSV}
                         className="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition ml-auto sm:ml-0"
                       >
@@ -1775,7 +1752,6 @@ export default function Dashboard() {
                           <Trash2 size={14} /> Delete Selected ({selectedContactIds.length})
                         </button>
                       )}
-                      {/* Delete All in Group Button */}
                       <button 
                         onClick={handleDeleteGroupContacts}
                         className="bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
@@ -1888,7 +1864,88 @@ export default function Dashboard() {
               </motion.div>
             )}
 
-            {/* SENDER EMAILS MANAGER WITH INCOMING & OUTGOING SERVER DETAILS */}
+            {/* SCHEDULED CAMPAIGNS TAB */}
+            {activeTab === 'scheduled-campaigns' && (
+              <motion.div key="scheduled-campaigns" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
+                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+                  <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+                    <h3 className="text-sm font-bold text-slate-800 uppercase">Scheduled Campaigns Queue</h3>
+                    <button onClick={() => fetchData(false)} className="text-xs font-semibold text-blue-600 hover:underline">Refresh List</button>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[600px]">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50/50">
+                          <th className="p-4">Campaign Title</th>
+                          <th className="p-4">Subject</th>
+                          <th className="p-4">Target Group</th>
+                          <th className="p-4">Scheduled Time</th>
+                          <th className="p-4">Status</th>
+                          <th className="p-4 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-sm">
+                        {campaigns.filter(c => c.status === 'Scheduled').length > 0 ? (
+                          campaigns.filter(c => c.status === 'Scheduled').map(camp => (
+                            <tr key={camp._id} className="hover:bg-slate-50/50">
+                              <td className="p-4 font-medium text-slate-800">{camp.title}</td>
+                              <td className="p-4 text-slate-600">{camp.subject}</td>
+                              <td className="p-4"><span className="bg-blue-50 text-blue-600 text-xs font-semibold px-2.5 py-1 rounded-full">{camp.group}</span></td>
+                              <td className="p-4 text-xs font-bold text-amber-600">{formatDateTime(camp.scheduledAt)}</td>
+                              <td className="p-4">
+                                <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-600 flex items-center gap-1.5 w-max">
+                                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span> Scheduled
+                                </span>
+                              </td>
+                              <td className="p-4 text-right space-x-2">
+                                <button 
+                                  onClick={() => {
+                                    setCampaignData({
+                                      title: camp.title,
+                                      subject: camp.subject,
+                                      group: camp.group,
+                                      senderEmail: camp.senderEmail,
+                                      cc: camp.cc || '',
+                                      bcc: camp.bcc || '',
+                                      htmlContent: camp.htmlContent,
+                                      attachments: null
+                                    });
+                                    setEditingId(camp._id);
+                                    setActiveTab('new-campaign');
+                                  }} 
+                                  className="text-blue-600 text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 transition"
+                                >
+                                  Edit / Reschedule
+                                </button>
+                                <button 
+                                  onClick={async () => {
+                                    if (confirm('Are you sure you want to cancel and delete this scheduled campaign?')) {
+                                      await axios.delete(`/api/campaigns/schedule/${camp._id}`);
+                                      triggerNotification('Scheduled campaign cancelled.');
+                                      fetchData(false);
+                                    }
+                                  }} 
+                                  className="text-rose-600 text-xs font-semibold px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 transition"
+                                >
+                                  Delete
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan="6" className="p-12 text-center text-slate-400 italic">No campaigns currently in the scheduled queue.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* SENDER EMAILS MANAGER */}
             {activeTab === 'senders-mgr' && (
               <motion.div key="senders-mgr" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -2001,7 +2058,6 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* CREATED SIGNATURES LIST TABLE WITH EDIT & DELETE */}
                 <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
                   <div className="p-4 border-b border-slate-200 bg-slate-50">
                     <h3 className="text-sm font-bold text-slate-800 uppercase">Created Signatures ({signatures.length})</h3>
@@ -2098,7 +2154,8 @@ export default function Dashboard() {
             {activeTab === 'new-campaign' && (
               <motion.div key="new-campaign" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                  <h3 className="text-base font-bold text-slate-800">Dispatch New Campaign</h3>
+                  <h3 className="text-base font-bold text-slate-800">Dispatch or Schedule Campaign</h3>
+                  
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Load from Saved Template</label>
                     <select onChange={handleSelectTemplateForCampaign} defaultValue="" className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white">
@@ -2106,12 +2163,14 @@ export default function Dashboard() {
                       {templates.map(t => <option key={t._id} value={t._id}>{t.title} {t.isDefault ? '(Default)' : ''}</option>)}
                     </select>
                   </div>
+
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Sender Email (From:)</label>
                     <select value={campaignData.senderEmail} onChange={handleCampaignSenderChange} className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white">
                       {senders.map(s => <option key={s._id} value={s.email}>{s.email}</option>)}
                     </select>
                   </div>
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">CC (Optional)</label>
@@ -2122,40 +2181,92 @@ export default function Dashboard() {
                       <input type="text" placeholder="bcc@example.com" value={campaignData.bcc} onChange={e => setCampaignData({...campaignData, bcc: e.target.value})} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
                     </div>
                   </div>
+
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Campaign Title</label>
                     <input type="text" placeholder="e.g., Q2 Product Launch" value={campaignData.title} onChange={e => setCampaignData({...campaignData, title: e.target.value})} className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm"/>
                   </div>
+
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Subject</label>
                     <input type="text" value={campaignData.subject} onChange={e => setCampaignData({...campaignData, subject: e.target.value})} className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm"/>
                   </div>
+
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Target Group Collection</label>
                     <select 
                       value={campaignData.group} 
                       onChange={e => setCampaignData({...campaignData, group: e.target.value})} 
-                      className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white font-medium text-slate-800"
+                      className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white font-medium text-slate-800 mb-2"
                     >
                       {groupsList.map((g, idx) => (
-                        <option key={idx} value={g}>{g} ({contacts.filter(c => (c.group || 'General') === g).length} contacts)</option>
+                        <option key={idx} value={g}>{g} ({contacts.filter(c => (c.group || 'General') === g && c.status === 'Active').length} active contacts)</option>
                       ))}
                     </select>
+
+                    <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 p-3 rounded-xl text-xs text-emerald-800">
+                      <input type="checkbox" defaultChecked id="onlyActiveFilter" className="w-4 h-4 rounded text-emerald-600 cursor-pointer" />
+                      <label htmlFor="onlyActiveFilter" className="font-semibold cursor-pointer">
+                        Automatically filter & send only to <span className="font-bold underline">Active Verified Emails</span> (Prevents bounces & spam blocks)
+                      </label>
+                    </div>
                   </div>
+
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Email Body Content (Includes Auto-Pulled Signature)</label>
+                    <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Email Body Content</label>
                     <EmailEditor 
                       content={campaignData.htmlContent} 
                       onChange={(html) => setCampaignData({...campaignData, htmlContent: html})}
                       onAttachmentChange={(files) => setCampaignData({...campaignData, attachments: files})}
                     />
                   </div>
-                  <button onClick={handleSendCampaign} className="w-full bg-blue-600 text-white py-3 rounded-xl text-sm font-semibold hover:bg-blue-700 transition">Dispatch Campaign</button>
+
+                  <div className="space-y-3 pt-2">
+                    <button onClick={handleSendCampaign} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl text-sm font-semibold transition shadow-sm flex items-center justify-center gap-2">
+                      <Send size={16} /> Dispatch Campaign Now
+                    </button>
+
+                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                      <h4 className="text-xs font-bold text-slate-700 uppercase">Or Schedule for Later Date & Time</h4>
+                      <div className="flex gap-2">
+                        <input 
+                          type="datetime-local" 
+                          id="scheduleDateTimePicker"
+                          className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-xs bg-white"
+                        />
+                        <button 
+                          onClick={async () => {
+                            const scheduleInput = document.getElementById('scheduleDateTimePicker').value;
+                            if (!scheduleInput) return triggerNotification('Please select a valid date and time.');
+                             
+                            try {
+                              const endpoint = editingId ? `/api/campaigns/schedule/${editingId}` : '/api/campaigns/schedule';
+                              const method = editingId ? 'put' : 'post';
+
+                              await axios[method](endpoint, {
+                                ...campaignData,
+                                scheduledAt: scheduleInput
+                              });
+                              triggerNotification(editingId ? 'Campaign rescheduled successfully!' : 'Campaign successfully scheduled!');
+                              setEditingId(null);
+                              setActiveTab('scheduled-campaigns');
+                              fetchData(false);
+                            } catch (err) {
+                              triggerNotification(err.response?.data?.error || 'Failed to schedule campaign.');
+                            }
+                          }} 
+                          className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition shadow-sm"
+                        >
+                          {editingId ? 'Update Schedule' : 'Schedule Campaign'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
                   <h3 className="text-base font-bold text-slate-800 mb-4">Live Email Preview</h3>
-                  <div className="flex-1 border border-slate-200 rounded-xl p-6 bg-slate-50 overflow-auto prose prose-sm max-w-none [&>img]:w-auto [&>img]:max-w-[1109px] [&>img]:h-auto">
+                  <div className="flex-1 border border-slate-200 rounded-xl p-6 bg-slate-50 overflow-auto prose prose-sm max-w-none">
                     <div dangerouslySetInnerHTML={{ __html: campaignData.htmlContent || '<p class="text-slate-400 italic">Start typing your email body content...</p>' }} />
                   </div>
                 </div>
@@ -2167,17 +2278,16 @@ export default function Dashboard() {
               <motion.div key="all-campaigns" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
                 <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm space-y-4">
                   <div className="p-4 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                    <h3 className="text-sm font-bold text-slate-800 uppercase">Past Campaigns & Recipient Delivery Logs ({campaigns.length})</h3>
+                    <h3 className="text-sm font-bold text-slate-800 uppercase">Past Campaigns & Recipient Delivery Logs ({campaigns.filter(c => c.status !== 'Scheduled').length})</h3>
                     <button onClick={() => fetchData(false)} className="text-xs font-semibold text-blue-600 hover:underline">Refresh List</button>
                   </div>
 
-                  {/* Horizontal Date Scroller Filter for All Campaigns (Current/Past dates only, sorted descending with latest first, formatted dd-mm-yyyy) */}
                   <div className="px-4 flex items-center gap-2 overflow-x-auto pb-2">
                     {(() => {
                       const trends = analytics?.dailyTrends || [];
                       const todayKey = getDateKey(new Date());
                       const dateKeysSet = new Set();
-                      campaigns.forEach(c => {
+                      campaigns.filter(c => c.status !== 'Scheduled').forEach(c => {
                         const k = getDateKey(c.sentAt);
                         if (k && k <= todayKey) dateKeysSet.add(k);
                       });
@@ -2185,7 +2295,6 @@ export default function Dashboard() {
                         const k = getDateKey(t.date);
                         if (k && k <= todayKey) dateKeysSet.add(k);
                       });
-                      // Sort descending so the latest/newest date appears first
                       const uniqueDates = Array.from(dateKeysSet).sort((a, b) => new Date(b) - new Date(a));
 
                       return uniqueDates.map((dateKey) => {
@@ -2209,6 +2318,7 @@ export default function Dashboard() {
                   <div className="divide-y divide-slate-200">
                     {(() => {
                       const filteredCampaigns = campaigns.filter(camp => {
+                        if (camp.status === 'Scheduled') return false;
                         if (!selectedCampaignDateFilter) return true;
                         const campDateKey = getDateKey(camp.sentAt);
                         return campDateKey === selectedCampaignDateFilter;
@@ -2226,7 +2336,7 @@ export default function Dashboard() {
                           const hasBouncedRecipients = campaignLogs.some(l => l.status === 'Bounced' || l.status === 'Failed');
                           const totalClicksForCamp = campaignLogs.filter(l => l.clicked).length;
                           const totalOpensForCamp = campaignLogs.filter(l => l.opened).length;
-                          
+                           
                           return (
                             <div key={camp._id} className="p-5 space-y-4 hover:bg-slate-50/40 transition">
                               <div className="flex flex-wrap items-center justify-between gap-4">
@@ -2240,7 +2350,7 @@ export default function Dashboard() {
                                   <span className="bg-indigo-50 text-indigo-600 font-bold px-3 py-1 rounded-xl">👁️ {totalOpensForCamp} Opens</span>
                                   <span className="bg-purple-50 text-purple-600 font-bold px-3 py-1 rounded-xl">🖱️ {totalClicksForCamp} Clicks</span>
                                   <span className="bg-emerald-50 text-emerald-600 font-bold px-3 py-1 rounded-xl">{formatDateTime(camp.sentAt)}</span>
-                                  
+                                   
                                   {hasBouncedRecipients && (
                                     <button 
                                       onClick={() => handleResendBounced(camp)}
@@ -2321,7 +2431,6 @@ export default function Dashboard() {
             {activeTab === 'analytics' && (
               <motion.div key="analytics" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
                 
-                {/* Horizontal Date Scroller for Analytics Tab (Sorted descending, formatted dd-mm-yyyy) */}
                 <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
                   <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Select Analytics Date Report</h4>
                   <div className="flex items-center gap-2 overflow-x-auto pb-1">
@@ -2358,7 +2467,6 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Dynamic Summary Metric Cards */}
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4">
                   <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm text-center">
                     <p className="text-xs font-bold text-slate-400 uppercase">Delivered</p>
@@ -2401,7 +2509,6 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  {/* Filter & Search Bar for Engagement Logs */}
                   <div className="px-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                     <div className="flex items-center gap-2">
                       {['All', 'Delivered', 'Bounced', 'Failed'].map(status => (
@@ -2481,7 +2588,7 @@ export default function Dashboard() {
                         disabled={logPage === 1}
                         className="p-2 border border-slate-200 rounded-xl bg-white text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 transition"
                       >
-                        <ChevronLeft size={16} />
+                        <ChevronLeft size= {16} />
                       </button>
                       <button 
                         onClick={() => setLogPage(prev => Math.min(prev + 1, totalLogPages))} 

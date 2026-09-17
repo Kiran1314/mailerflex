@@ -26,7 +26,7 @@ async function seedDefaultAdmin() {
 }
 seedDefaultAdmin();
 
-// Login Endpoint
+// Login EndpointQA
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
