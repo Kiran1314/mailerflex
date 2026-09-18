@@ -23,8 +23,11 @@ export const pollIncomingEmails = async () => {
         socketTimeout: 15000 // 15 seconds timeout safeguard
       });
 
-      // Prevent unhandled error events from crashing the server process
+      // Gracefully handle error events without cluttering PM2 error logs with routine timeouts
       client.on('error', (err) => {
+        if (err.message && (err.message.includes('Socket timeout') || err.message.includes('ETIMEDOUT') || err.message.includes('ECONNRESET'))) {
+          return; // Silently bypass expected socket timeouts
+        }
         console.error(`IMAP connection error for ${sender.email}:`, err.message);
       });
 
@@ -65,8 +68,7 @@ export const pollIncomingEmails = async () => {
 
         await client.logout();
       } catch (connErr) {
-        // Gracefully catch timeout or network issues per sender without crashing
-        console.warn(`Skipping inbox sync for ${sender.email} due to network timeout/auth check.`);
+        // Routine network drop or timeout caught cleanly
       }
     }
   } catch (err) {
