@@ -58,6 +58,7 @@ const Sender = mongoose.models.Sender || mongoose.model('Sender', SenderSchema);
 export async function processCampaignExecution(camp) {
   try {
     console.log(`[Cron Worker] Processing execution for campaign: "${camp.title}" (${camp._id})`);
+    
     const senderRecord = await Sender.findOne({ email: camp.senderEmail });
     if (!senderRecord) {
       console.error(`[Cron Worker Error] Sender configuration for ${camp.senderEmail} not found.`);
@@ -84,23 +85,26 @@ export async function processCampaignExecution(camp) {
     let processedHtml = camp.htmlContent || '';
     let attachments = [];
     
-    const imgRegex = /src="(?:https?:\/\/[^/]+)?(\/signatures\/[^"]+)"/g;
-    let match;
-    
-    while ((match = imgRegex.exec(camp.htmlContent)) !== null) {
-      const fullMatchTag = match[0];
-      const relativePath = match[1];
-      const localFilePath = path.join(process.cwd(), relativePath);
+    // Safeguarded regex matching
+    if (typeof processedHtml === 'string') {
+      const imgRegex = /src="(?:https?:\/\/[^/]+)?(\/signatures\/[^"]+)"/g;
+      let match;
+      
+      while ((match = imgRegex.exec(processedHtml)) !== null) {
+        const fullMatchTag = match[0];
+        const relativePath = match[1];
+        const localFilePath = path.join(process.cwd(), relativePath);
 
-      if (fs.existsSync(localFilePath)) {
-        const uniqueCid = `sig-${Date.now()}-${Math.floor(Math.random() * 1000)}@mailer.local`;
-        processedHtml = processedHtml.replace(fullMatchTag, `src="cid:${uniqueCid}"`);
-        
-        attachments.push({
-          filename: path.basename(localFilePath),
-          path: localFilePath,
-          cid: uniqueCid
-        });
+        if (fs.existsSync(localFilePath)) {
+          const uniqueCid = `sig-${Date.now()}-${Math.floor(Math.random() * 1000)}@mailer.local`;
+          processedHtml = processedHtml.replace(fullMatchTag, `src="cid:${uniqueCid}"`);
+          
+          attachments.push({
+            filename: path.basename(localFilePath),
+            path: localFilePath,
+            cid: uniqueCid
+          });
+        }
       }
     }
 
@@ -120,42 +124,42 @@ export async function processCampaignExecution(camp) {
         maxMessages: 100
       });
 
-      const logRecord = await CampaignLog.create({
-        campaignTitle: camp.title || camp.subject || 'Untitled Campaign',
-        senderEmail: senderRecord.email,
-        recipientEmail: contact.email,
-        status: 'Sent',
-        opened: false,
-        clicked: false,
-        unsubscribed: false
-      });
-
-      let personalizedHtml = processedHtml
-        .replace(/{{name}}/g, contact.name || 'Valued Client')
-        .replace(/{{email}}/g, contact.email || '')
-        .replace(/{{company}}/g, contact.company || 'Your Company')
-        .replace(/{{mobile}}/g, contact.mobile || '')
-        .replace(/{{industry}}/g, contact.industry || '');
-
-      personalizedHtml = personalizedHtml.replace(/href="([^"]+)"/g, (m, origUrl) => {
-        if (origUrl.includes('https://mailer.ibcstudio.com/api/analytics')) return m;
-        const clickTrackerUrl = `https://mailer.ibcstudio.com/api/analytics/click?id=${logRecord._id}&url=${encodeURIComponent(origUrl)}`;
-        return `href="${clickTrackerUrl}"`;
-      });
-
-      const openTrackerUrl = `https://mailer.ibcstudio.com/api/analytics/open/${logRecord._id}`;
-      const unsubscribeUrl = `https://mailer.ibcstudio.com/api/analytics/unsubscribe/${logRecord._id}`;
-
-      personalizedHtml += `<img src="${openTrackerUrl}" width="1" height="1" style="display:none;" alt="" />`;
-      personalizedHtml += `<br><p style="font-size: 11px; color: #888; text-align: center; margin-top: 20px;">Don't want these emails anymore? <a href="${unsubscribeUrl}" style="color: #555; text-decoration: underline;">Unsubscribe here</a>.</p>`;
-
       try {
+        const logRecord = await CampaignLog.create({
+          campaignTitle: camp.title || camp.subject || 'Untitled Campaign',
+          senderEmail: senderRecord.email,
+          recipientEmail: contact.email,
+          status: 'Sent',
+          opened: false,
+          clicked: false,
+          unsubscribed: false
+        });
+
+        let personalizedHtml = processedHtml
+          .replace(/{{name}}/g, contact.name || 'Valued Client')
+          .replace(/{{email}}/g, contact.email || '')
+          .replace(/{{company}}/g, contact.company || 'Your Company')
+          .replace(/{{mobile}}/g, contact.mobile || '')
+          .replace(/{{industry}}/g, contact.industry || '');
+
+        personalizedHtml = personalizedHtml.replace(/href="([^"]+)"/g, (m, origUrl) => {
+          if (origUrl.includes('https://mailer.ibcstudio.com/api/analytics')) return m;
+          const clickTrackerUrl = `https://mailer.ibcstudio.com/api/analytics/click?id=${logRecord._id}&url=${encodeURIComponent(origUrl)}`;
+          return `href="${clickTrackerUrl}"`;
+        });
+
+        const openTrackerUrl = `https://mailer.ibcstudio.com/api/analytics/open/${logRecord._id}`;
+        const unsubscribeUrl = `https://mailer.ibcstudio.com/api/analytics/unsubscribe/${logRecord._id}`;
+
+        personalizedHtml += `<img src="${openTrackerUrl}" width="1" height="1" style="display:none;" alt="" />`;
+        personalizedHtml += `<br><p style="font-size: 11px; color: #888; text-align: center; margin-top: 20px;">Don't want these emails anymore? <a href="${unsubscribeUrl}" style="color: #555; text-decoration: underline;">Unsubscribe here</a>.</p>`;
+
         let mailOptions = {
           from: `"IBC Studio" <${senderRecord.email}>`,
           to: contact.email,
           subject: camp.subject || 'Update from our Team',
           html: personalizedHtml,
-          attachments: attachments
+          attachments: attachments.length > 0 ? attachments : undefined
         };
 
         if (camp.cc && camp.cc.trim() !== '') mailOptions.cc = camp.cc.trim();
@@ -165,19 +169,15 @@ export async function processCampaignExecution(camp) {
         await CampaignLog.findByIdAndUpdate(logRecord._id, { status: 'Delivered' });
       } catch (mailErr) {
         console.error(`[SMTP Error] Failed for ${contact.email}:`, mailErr.message);
-        await CampaignLog.findByIdAndUpdate(logRecord._id, {
-          status: 'Bounced',
-          errorDetails: mailErr.message
-        });
       } finally {
         transporter.close();
       }
 
       await new Promise(resolve => setTimeout(resolve, 400));
     }
-    console.log(`[Cron Worker] Successfully finished campaign: "${camp.title}"`);
+    console.log(`[Cron Worker] Successfully finished campaign dispatch: "${camp.title}"`);
   } catch (err) {
-    console.error('Execution Worker Error:', err);
+    console.error('[Execution Worker Fatal Error]:', err.message);
   }
 }
 
