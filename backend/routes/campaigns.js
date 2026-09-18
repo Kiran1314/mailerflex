@@ -54,25 +54,25 @@ const CampaignLog = mongoose.models.CampaignLog || mongoose.model('CampaignLog',
 const Contact = mongoose.models.Contact || mongoose.model('Contact', ContactSchema);
 const Sender = mongoose.models.Sender || mongoose.model('Sender', SenderSchema);
 
-// Reusable Background Campaign Dispatch Worker (Used by both immediate send and cron scheduler)
+// Reusable Background Campaign Dispatch Worker
 async function processCampaignExecution(camp) {
   try {
+    console.log(`[Cron Worker] Processing execution for campaign: "${camp.title}" (${camp._id})`);
     const senderRecord = await Sender.findOne({ email: camp.senderEmail });
     if (!senderRecord) {
-      console.error(`Background Dispatch Error: Sender configuration for ${camp.senderEmail} not found.`);
+      console.error(`[Cron Worker Error] Sender configuration for ${camp.senderEmail} not found.`);
       camp.status = 'Cancelled';
       await camp.save();
       return;
     }
 
-    // Fetch contacts matching group and filter only Active verified emails to prevent bounces
     const contacts = await Contact.find({ 
       group: { $regex: new RegExp(`^${camp.group}$`, 'i') },
       status: 'Active' 
     });
 
     if (contacts.length === 0) {
-      console.error(`Background Dispatch Error: No active verified contacts found in group "${camp.group}".`);
+      console.error(`[Cron Worker Error] No active verified contacts found in group "${camp.group}".`);
       camp.status = 'Cancelled';
       await camp.save();
       return;
@@ -164,7 +164,7 @@ async function processCampaignExecution(camp) {
         await transporter.sendMail(mailOptions);
         await CampaignLog.findByIdAndUpdate(logRecord._id, { status: 'Delivered' });
       } catch (mailErr) {
-        console.error(`SMTP Dispatch Failed for ${contact.email}:`, mailErr.message);
+        console.error(`[SMTP Error] Failed for ${contact.email}:`, mailErr.message);
         await CampaignLog.findByIdAndUpdate(logRecord._id, {
           status: 'Bounced',
           errorDetails: mailErr.message
@@ -175,16 +175,22 @@ async function processCampaignExecution(camp) {
 
       await new Promise(resolve => setTimeout(resolve, 400));
     }
+    console.log(`[Cron Worker] Successfully finished campaign: "${camp.title}"`);
   } catch (err) {
     console.error('Execution Worker Error:', err);
   }
 }
 
-// BACKGROUND CRON JOB: Checks every minute for due scheduled campaigns
+// BACKGROUND CRON JOB: Runs every minute on VPS server time
 cron.schedule('* * * * *', async () => {
   try {
     const now = new Date();
+    // Query campaigns where scheduled time is less than or equal to current VPS UTC time
     const dueCampaigns = await Campaign.find({ status: 'Scheduled', scheduledAt: { $lte: now } });
+
+    if (dueCampaigns.length > 0) {
+      console.log(`[Cron Pulse] Found ${dueCampaigns.length} due scheduled campaign(s) to dispatch.`);
+    }
 
     for (const camp of dueCampaigns) {
       camp.status = 'Processing';
@@ -243,7 +249,7 @@ router.post('/send', async (req, res) => {
   }
 });
 
-// SCHEDULE A NEW CAMPAIGN (Allows current day & future scheduling)
+// SCHEDULE A NEW CAMPAIGN
 router.post('/schedule', async (req, res) => {
   try {
     const { title, subject, group, senderEmail, htmlContent, cc, bcc, scheduledAt } = req.body;
@@ -253,7 +259,7 @@ router.post('/schedule', async (req, res) => {
     }
 
     const scheduledDate = new Date(scheduledAt);
-    if (scheduledDate.getTime() < Date.now() - 30000) {
+    if (scheduledDate.getTime() < Date.now() - 60000) {
       return res.status(400).json({ error: 'Scheduled time cannot be in the past.' });
     }
 
@@ -271,6 +277,7 @@ router.post('/schedule', async (req, res) => {
     });
 
     await campaign.save();
+    console.log(`[Campaign Scheduled] "${campaign.title}" saved for UTC: ${scheduledDate.toISOString()}`);
     res.status(200).json({ message: 'Campaign successfully scheduled!', campaign });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -297,7 +304,7 @@ router.put('/schedule/:id', async (req, res) => {
     
     if (scheduledAt) {
       const scheduledDate = new Date(scheduledAt);
-      if (scheduledDate.getTime() < Date.now() - 30000) {
+      if (scheduledDate.getTime() < Date.now() - 60000) {
         return res.status(400).json({ error: 'Scheduled time cannot be in the past.' });
       }
       campaign.scheduledAt = scheduledDate;
@@ -330,7 +337,7 @@ router.delete('/schedule/:id', async (req, res) => {
   }
 });
 
-// GET ALL CAMPAIGNS (Including scheduledAt and sentAt details for frontend tables)
+// GET ALL CAMPAIGNS
 router.get('/', async (req, res) => {
   try {
     const campaigns = await Campaign.find().sort({ scheduledAt: -1, sentAt: -1 });
