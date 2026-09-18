@@ -8,7 +8,7 @@ import path from 'path';
 
 import authRoutes from './routes/auth.js';
 import contactRoutes from './routes/contacts.js';
-import campaignRoutes, { processCampaignExecution } from './routes/campaigns.js';
+import campaignRoutes from './routes/campaigns.js';
 import templateRoutes from './routes/templates.js';
 import signatureRoutes from './routes/signatures.js'; 
 import analyticsRoutes from './routes/analytics.js';
@@ -55,32 +55,102 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mailer-saas
       pollIncomingEmails();
     }, 30000);
 
-    // 2. BULLETPROOF SERVER-SIDE BACKGROUND SCHEDULER (Runs every 30 seconds as redundant safety fallback)
+    // 2. BULLETPROOF BACKGROUND SCHEDULER & DISPATCHER (Runs every 30 seconds safely)
     setInterval(async () => {
       try {
         const now = new Date();
+        
         if (mongoose.models.Campaign) {
           const CampaignModel = mongoose.model('Campaign');
+          const ContactModel = mongoose.models.Contact;
+          const SenderModel = mongoose.models.Sender;
+          const LogModel = mongoose.models.CampaignLog;
+
           const dueCampaigns = await CampaignModel.find({ 
             status: 'Scheduled', 
             scheduledAt: { $lte: now } 
           });
 
           if (dueCampaigns.length > 0) {
-            console.log(`[Server Background Scheduler] Found ${dueCampaigns.length} due campaign(s). Dispatching...`);
+            console.log(`[Background Scheduler] Found ${dueCampaigns.length} due campaign(s). Processing safely...`);
+            
             for (const camp of dueCampaigns) {
               camp.status = 'Processing';
               await camp.save();
-              
-              // Trigger actual email transmission worker
-              processCampaignExecution(camp).catch(err => {
-                console.error(`[Server Scheduler Error] Failed executing campaign ${camp._id}:`, err.message);
-              });
+
+              // Safe execution block to prevent any server crash or loop
+              try {
+                const senderRecord = await SenderModel.findOne({ email: camp.senderEmail });
+                if (!senderRecord) {
+                  console.error(`[Background Scheduler Error] Sender config not found for ${camp.senderEmail}`);
+                  camp.status = 'Cancelled';
+                  await camp.save();
+                  continue;
+                }
+
+                const contacts = await ContactModel.find({ 
+                  group: { $regex: new RegExp(`^${camp.group}$`, 'i') },
+                  status: 'Active' 
+                });
+
+                if (contacts.length === 0) {
+                  console.error(`[Background Scheduler Error] No active contacts in group "${camp.group}"`);
+                  camp.status = 'Cancelled';
+                  await camp.save();
+                  continue;
+                }
+
+                camp.status = 'Sent';
+                camp.sentAt = new Date();
+                await camp.save();
+
+                // Secure dispatch iteration loop
+                for (const contact of contacts) {
+                  const portNum = Number(senderRecord.port) || 465;
+                  const transporter = (await import('nodemailer')).default.createTransport({
+                    host: senderRecord.host || 'smtp.hostinger.com',
+                    port: portNum,
+                    secure: portNum === 465,
+                    auth: { user: senderRecord.email, pass: senderRecord.password },
+                    tls: { rejectUnauthorized: false }
+                  });
+
+                  const logRecord = await LogModel.create({
+                    campaignTitle: camp.title || camp.subject || 'Scheduled Campaign',
+                    senderEmail: senderRecord.email,
+                    recipientEmail: contact.email,
+                    status: 'Sent'
+                  });
+
+                  let personalizedHtml = (camp.htmlContent || '')
+                    .replace(/{{name}}/g, contact.name || 'Valued Client')
+                    .replace(/{{email}}/g, contact.email || '')
+                    .replace(/{{company}}/g, contact.company || 'Your Company')
+                    .replace(/{{mobile}}/g, contact.mobile || '')
+                    .replace(/{{industry}}/g, contact.industry || '');
+
+                  await transporter.sendMail({
+                    from: `"IBC Studio" <${senderRecord.email}>`,
+                    to: contact.email,
+                    subject: camp.subject || 'Update from our Team',
+                    html: personalizedHtml
+                  });
+
+                  await LogModel.findByIdAndUpdate(logRecord._id, { status: 'Delivered' });
+                  transporter.close();
+                  await new Promise(r => setTimeout(r, 300));
+                }
+                console.log(`[Background Scheduler] Successfully dispatched campaign: "${camp.title}"`);
+              } catch (execErr) {
+                console.error(`[Execution Error for Campaign ${camp._id}]:`, execErr.message);
+                camp.status = 'Cancelled';
+                await camp.save();
+              }
             }
           }
         }
       } catch (schErr) {
-        console.error('Background Scheduler Error:', schErr.message);
+        console.error('Background Scheduler Fatal Error:', schErr.message);
       }
     }, 30000);
 
