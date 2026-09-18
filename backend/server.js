@@ -17,16 +17,15 @@ import senderRoutes from './routes/senders.js';
 import EmailMessage from './models/EmailMessage.js'; 
 import { pollIncomingEmails } from './services/mailPoller.js';
 
-// Import Campaign model for the direct background worker
-import Campaign from './models/Campaign.js'; // (Or ensure schema is accessible)
-
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
+// Serve static signatures folder
 app.use('/signatures', express.static(path.join(process.cwd(), 'signatures')));
 
+// Mount route handlers
 app.use('/api/auth', authRoutes);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/campaigns', campaignRoutes);
@@ -45,9 +44,12 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mailer-saas
     try {
       await EmailMessage.updateMany({ isFlagged: { $exists: false } }, {$set: { isFlagged: false } });
       await EmailMessage.updateMany({ isPinned: { $exists: false } }, {$set: { isPinned: false } });
-    } catch (migErr) {}
+      console.log('Legacy email documents migrated.');
+    } catch (migErr) {
+      console.error('Migration error:', migErr);
+    }
 
-    // 1. Mail Poller interval
+    // 1. Mail Poller interval (runs every 30 seconds)
     pollIncomingEmails();
     setInterval(() => {
       pollIncomingEmails();
@@ -57,20 +59,21 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mailer-saas
     setInterval(async () => {
       try {
         const now = new Date();
-        // Find any scheduled campaign whose time has arrived
-        const dueCampaigns = await mongoose.model('Campaign').find({ 
-          status: 'Scheduled', 
-          scheduledAt: { $lte: now } 
-        });
+        
+        // Check if Campaign model is registered and fetch due scheduled campaigns
+        if (mongoose.models.Campaign) {
+          const CampaignModel = mongoose.model('Campaign');
+          const dueCampaigns = await CampaignModel.find({ 
+            status: 'Scheduled', 
+            scheduledAt: { $lte: now } 
+          });
 
-        if (dueCampaigns.length > 0) {
-          console.log(`[Background Scheduler] Found ${dueCampaigns.length} due campaign(s). Dispatching now...`);
-          for (const camp of dueCampaigns) {
-            camp.status = 'Processing';
-            await camp.save();
-
-            // Trigger internal dispatch request or execute worker logic
-            // (You can also perform an internal fetch or call your execution function here)
+          if (dueCampaigns.length > 0) {
+            console.log(`[Background Scheduler] Found ${dueCampaigns.length} due campaign(s). Processing...`);
+            for (const camp of dueCampaigns) {
+              camp.status = 'Processing';
+              await camp.save();
+            }
           }
         }
       } catch (schErr) {
@@ -78,6 +81,7 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mailer-saas
       }
     }, 30000);
 
+    // Start server listener
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
   })
   .catch(err => console.error('MongoDB Connection Error:', err));
