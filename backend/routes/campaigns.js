@@ -54,8 +54,8 @@ const CampaignLog = mongoose.models.CampaignLog || mongoose.model('CampaignLog',
 const Contact = mongoose.models.Contact || mongoose.model('Contact', ContactSchema);
 const Sender = mongoose.models.Sender || mongoose.model('Sender', SenderSchema);
 
-// Reusable Background Campaign Dispatch Worker
-async function processCampaignExecution(camp) {
+// Reusable Background Campaign Dispatch Worker (Exported for server-side fallback execution)
+export async function processCampaignExecution(camp) {
   try {
     console.log(`[Cron Worker] Processing execution for campaign: "${camp.title}" (${camp._id})`);
     const senderRecord = await Sender.findOne({ email: camp.senderEmail });
@@ -185,7 +185,6 @@ async function processCampaignExecution(camp) {
 cron.schedule('* * * * *', async () => {
   try {
     const now = new Date();
-    // Query campaigns where scheduled time is less than or equal to current VPS UTC time
     const dueCampaigns = await Campaign.find({ status: 'Scheduled', scheduledAt: { $lte: now } });
 
     if (dueCampaigns.length > 0) {

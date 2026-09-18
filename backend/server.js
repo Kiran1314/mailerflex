@@ -8,7 +8,7 @@ import path from 'path';
 
 import authRoutes from './routes/auth.js';
 import contactRoutes from './routes/contacts.js';
-import campaignRoutes from './routes/campaigns.js';
+import campaignRoutes, { processCampaignExecution } from './routes/campaigns.js';
 import templateRoutes from './routes/templates.js';
 import signatureRoutes from './routes/signatures.js'; 
 import analyticsRoutes from './routes/analytics.js';
@@ -55,12 +55,10 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mailer-saas
       pollIncomingEmails();
     }, 30000);
 
-    // 2. BULLETPROOF BACKGROUND SCHEDULER (Runs every 30 seconds)
+    // 2. BULLETPROOF SERVER-SIDE BACKGROUND SCHEDULER (Runs every 30 seconds as redundant safety fallback)
     setInterval(async () => {
       try {
         const now = new Date();
-        
-        // Check if Campaign model is registered and fetch due scheduled campaigns
         if (mongoose.models.Campaign) {
           const CampaignModel = mongoose.model('Campaign');
           const dueCampaigns = await CampaignModel.find({ 
@@ -69,10 +67,15 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mailer-saas
           });
 
           if (dueCampaigns.length > 0) {
-            console.log(`[Background Scheduler] Found ${dueCampaigns.length} due campaign(s). Processing...`);
+            console.log(`[Server Background Scheduler] Found ${dueCampaigns.length} due campaign(s). Dispatching...`);
             for (const camp of dueCampaigns) {
               camp.status = 'Processing';
               await camp.save();
+              
+              // Trigger actual email transmission worker
+              processCampaignExecution(camp).catch(err => {
+                console.error(`[Server Scheduler Error] Failed executing campaign ${camp._id}:`, err.message);
+              });
             }
           }
         }
