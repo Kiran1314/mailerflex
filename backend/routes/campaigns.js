@@ -16,8 +16,8 @@ const CampaignSchema = new mongoose.Schema({
   cc: String,
   bcc: String,
   status: { type: String, enum: ['Scheduled', 'Processing', 'Sent', 'Cancelled'], default: 'Sent' },
-  scheduledAt: { type: Date, default: null },
-  sentAt: { type: Date, default: Date.now }
+  scheduledAt: { type: String, default: null }, // Changed to String
+  sentAt: { type: String }                     // Changed to String
 });
 
 const CampaignLogSchema = new mongoose.Schema({
@@ -53,6 +53,16 @@ const Campaign = mongoose.models.Campaign || mongoose.model('Campaign', Campaign
 const CampaignLog = mongoose.models.CampaignLog || mongoose.model('CampaignLog', CampaignLogSchema);
 const Contact = mongoose.models.Contact || mongoose.model('Contact', ContactSchema);
 const Sender = mongoose.models.Sender || mongoose.model('Sender', SenderSchema);
+
+
+// Helper function to get current IST time string
+function getISTTimestamp() {
+  const now = new Date();
+  // Format to IST string directly
+  return now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
+}
+
+
 
 // Reusable Background Campaign Dispatch Worker (Exported for server-side fallback execution)
 export async function processCampaignExecution(camp) {
@@ -201,6 +211,7 @@ cron.schedule('* * * * *', async () => {
   }
 });
 
+ 
 // DISPATCH CAMPAIGN IMMEDIATELY
 router.post('/send', async (req, res) => {
   console.log('Incoming Campaign Dispatch Request:', req.body);
@@ -224,10 +235,8 @@ router.post('/send', async (req, res) => {
       return res.status(400).json({ error: `No active verified contacts found in group "${group}". Please run email verification first.` });
     }
 
-    // Create accurate IST Date object for immediate send
-    const nowUtc = new Date();
-    const istOffsetMs = 5.5 * 60 * 60 * 1000;
-    const istDate = new Date(nowUtc.getTime() + istOffsetMs);
+    // Get exact local IST string representation
+    const istString = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Kolkata' }); // Format: DD/MM/YYYY, HH:MM:SS
 
     const campaign = new Campaign({ 
       title: title || subject || 'Broadcast', 
@@ -238,7 +247,7 @@ router.post('/send', async (req, res) => {
       cc, 
       bcc, 
       status: 'Sent',
-      sentAt: istDate // Saves the adjusted IST timestamp directly
+      sentAt: istString // Saves exact local system time string
     });
     await campaign.save();
 
