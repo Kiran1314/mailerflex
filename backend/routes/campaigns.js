@@ -213,6 +213,7 @@ cron.schedule('* * * * *', async () => {
 
  
 // DISPATCH CAMPAIGN IMMEDIATELY
+ 
 router.post('/send', async (req, res) => {
   console.log('Incoming Campaign Dispatch Request:', req.body);
   const { title, subject, group, senderEmail, htmlContent, cc, bcc } = req.body;
@@ -235,9 +236,7 @@ router.post('/send', async (req, res) => {
       return res.status(400).json({ error: `No active verified contacts found in group "${group}". Please run email verification first.` });
     }
 
-    // Get exact local IST string representation
-    const istString = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Kolkata' }); // Format: DD/MM/YYYY, HH:MM:SS
-
+    // Use standard Date directly without double-shifting
     const campaign = new Campaign({ 
       title: title || subject || 'Broadcast', 
       subject, 
@@ -247,7 +246,7 @@ router.post('/send', async (req, res) => {
       cc, 
       bcc, 
       status: 'Sent',
-      sentAt: istString // Saves exact local system time string
+      sentAt: new Date() 
     });
     await campaign.save();
 
