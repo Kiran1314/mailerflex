@@ -56,9 +56,10 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mailer-saas
     }, 30000);
 
     // 2. BULLETPROOF BACKGROUND SCHEDULER & DISPATCHER (Runs every 30 seconds safely)
+    // BULLETPROOF TIMEZONE-AGNOSTIC BACKGROUND SCHEDULER (Runs every 30 seconds)
     setInterval(async () => {
       try {
-        const now = new Date();
+        const currentTimestamp = Date.now();
         
         if (mongoose.models.Campaign) {
           const CampaignModel = mongoose.model('Campaign');
@@ -66,23 +67,22 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mailer-saas
           const SenderModel = mongoose.models.Sender;
           const LogModel = mongoose.models.CampaignLog;
 
+          // Find campaigns where scheduledAt time (in milliseconds) is less than or equal to right now
           const dueCampaigns = await CampaignModel.find({ 
             status: 'Scheduled', 
-            scheduledAt: { $lte: now } 
+            scheduledAt: { $lte: new Date(currentTimestamp) } 
           });
 
           if (dueCampaigns.length > 0) {
-            console.log(`[Background Scheduler] Found ${dueCampaigns.length} due campaign(s). Processing safely...`);
+            console.log(`[Background Scheduler] Epoch match! Found ${dueCampaigns.length} due campaign(s). Dispatching...`);
             
             for (const camp of dueCampaigns) {
               camp.status = 'Processing';
               await camp.save();
 
-              // Safe execution block to prevent any server crash or loop
               try {
                 const senderRecord = await SenderModel.findOne({ email: camp.senderEmail });
                 if (!senderRecord) {
-                  console.error(`[Background Scheduler Error] Sender config not found for ${camp.senderEmail}`);
                   camp.status = 'Cancelled';
                   await camp.save();
                   continue;
@@ -94,7 +94,6 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mailer-saas
                 });
 
                 if (contacts.length === 0) {
-                  console.error(`[Background Scheduler Error] No active contacts in group "${camp.group}"`);
                   camp.status = 'Cancelled';
                   await camp.save();
                   continue;
@@ -104,7 +103,6 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mailer-saas
                 camp.sentAt = new Date();
                 await camp.save();
 
-                // Secure dispatch iteration loop
                 for (const contact of contacts) {
                   const portNum = Number(senderRecord.port) || 465;
                   const transporter = (await import('nodemailer')).default.createTransport({
@@ -140,7 +138,7 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mailer-saas
                   transporter.close();
                   await new Promise(r => setTimeout(r, 300));
                 }
-                console.log(`[Background Scheduler] Successfully dispatched campaign: "${camp.title}"`);
+                console.log(`[Background Scheduler] Successfully finished campaign: "${camp.title}"`);
               } catch (execErr) {
                 console.error(`[Execution Error for Campaign ${camp._id}]:`, execErr.message);
                 camp.status = 'Cancelled';
