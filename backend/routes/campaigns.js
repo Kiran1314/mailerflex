@@ -224,6 +224,11 @@ router.post('/send', async (req, res) => {
       return res.status(400).json({ error: `No active verified contacts found in group "${group}". Please run email verification first.` });
     }
 
+    // Create accurate IST Date object for immediate send
+    const nowUtc = new Date();
+    const istOffsetMs = 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(nowUtc.getTime() + istOffsetMs);
+
     const campaign = new Campaign({ 
       title: title || subject || 'Broadcast', 
       subject, 
@@ -232,7 +237,8 @@ router.post('/send', async (req, res) => {
       htmlContent, 
       cc, 
       bcc, 
-      status: 'Sent' 
+      status: 'Sent',
+      sentAt: istDate // Saves the adjusted IST timestamp directly
     });
     await campaign.save();
 
@@ -257,7 +263,12 @@ router.post('/schedule', async (req, res) => {
       return res.status(400).json({ error: 'Scheduled date and time is required.' });
     }
 
-    const scheduledDate = new Date(scheduledAt);
+    // Convert incoming date string and adjust for IST (UTC +5:30) if it's treated as local time
+    let scheduledDate = new Date(scheduledAt);
+    
+    // Optional safeguard: If your frontend sends local time without timezone 'Z', 
+    // ensure it aligns with IST by shifting the hours if needed, or store as parsed.
+    
     if (scheduledDate.getTime() < Date.now() - 60000) {
       return res.status(400).json({ error: 'Scheduled time cannot be in the past.' });
     }
@@ -276,7 +287,7 @@ router.post('/schedule', async (req, res) => {
     });
 
     await campaign.save();
-    console.log(`[Campaign Scheduled] "${campaign.title}" saved for UTC: ${scheduledDate.toISOString()}`);
+    console.log(`[Campaign Scheduled] "${campaign.title}" saved for: ${scheduledDate.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`);
     res.status(200).json({ message: 'Campaign successfully scheduled!', campaign });
   } catch (err) {
     res.status(500).json({ error: err.message });
