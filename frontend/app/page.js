@@ -16,49 +16,37 @@ const CHART_COLORS = ['#3b82f6', '#10b981', '#6366f1', '#f43f5e'];
 
  
  
-// Helper for DD/MM/YYYY : HH:MM:SS AM/PM format (Displays literal scheduled time without timezone shifting)
+ 
+
+// Helper for DD/MM/YYYY : HH:MM:SS AM/PM format (Forced to IST local display)
 const formatDateTime = (dateInput) => {
   if (!dateInput) return '-';
-  
-  // If the input is a raw ISO/UTC string from a datetime-local picker, extract the literal date & time parts
-  const rawStr = String(dateInput);
-  if (rawStr.includes('T') && (rawStr.endsWith('Z') || rawStr.includes('+') || rawStr.includes('GMT'))) {
-    // Parse parts safely or fallback to local date extraction
-    const d = new Date(dateInput);
-    if (!isNaN(d.getTime())) {
-      const day = String(d.getDate()).padStart(2, '0');
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const year = d.getFullYear();
-
-      let hours = d.getHours();
-      const minutes = String(d.getMinutes()).padStart(2, '0');
-      const seconds = String(d.getSeconds()).padStart(2, '0');
-      const ampm = hours >= 12 ? 'PM' : 'AM';
-      hours = hours % 12;
-      hours = hours ? hours : 12; 
-      const strHours = String(hours).padStart(2, '0');
-
-      return `${day}/${month}/${year} : ${strHours}:${minutes}:${seconds} ${ampm}`;
-    }
-  }
-
-  // Fallback for standard parsing
   const d = new Date(dateInput);
   if (isNaN(d.getTime())) return '-';
 
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const year = d.getFullYear();
-
-  let hours = d.getHours();
-  const minutes = String(d.getMinutes()).padStart(2, '0');
-  const seconds = String(d.getSeconds()).padStart(2, '0');
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12;
-  hours = hours ? hours : 12; 
-  const strHours = String(hours).padStart(2, '0');
-
-  return `${day}/${month}/${year} : ${strHours}:${minutes}:${seconds} ${ampm}`;
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kolkata',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    }).format(d).replace(',', ' :');
+  } catch (e) {
+    // Fallback if Intl fails
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    let hours = d.getHours();
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    const seconds = String(d.getSeconds()).padStart(2, '0');
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12 || 12;
+    return `${day}/${month}/${year} : ${String(hours).padStart(2, '0')}:${minutes}:${seconds} ${ampm}`;
+  }
 };
 
 // Helper to format date string to dd-mm-yyyy display format
