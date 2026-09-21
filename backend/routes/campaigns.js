@@ -275,7 +275,7 @@ router.post('/schedule', async (req, res) => {
 
     // Treat the incoming datetime-local string as IST and convert it to true UTC for database storage
     const localDate = new Date(scheduledAt);
-    const utcEquivalent = new Date(localDate.getTime());
+    const utcEquivalent = new Date(localDate.getTime() - (5.5 * 60 * 60 * 1000));
 
     const campaign = new Campaign({
       title: title || subject || 'Scheduled Broadcast',
@@ -324,7 +324,7 @@ router.put('/schedule/:id', async (req, res) => {
       }
 
       // Adjust local picker time to true UTC equivalent for storage
-      const utcEquivalent = new Date(scheduledDate.getTime());
+      const utcEquivalent = new Date(scheduledDate.getTime() - (5.5 * 60 * 60 * 1000));
       
       campaign.scheduledAt = utcEquivalent;
       campaign.sentAt = utcEquivalent;
