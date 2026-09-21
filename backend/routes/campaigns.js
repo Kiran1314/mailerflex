@@ -17,7 +17,7 @@ const CampaignSchema = new mongoose.Schema({
   bcc: String,
   status: { type: String, enum: ['Scheduled', 'Processing', 'Sent', 'Cancelled'], default: 'Sent' },
   scheduledAt: { type: String, default: null }, // Changed to String
-  sentAt: { type: String }                     // Changed to String
+  sentAt: { type: Date, default: Date.now }
 });
 
 const CampaignLogSchema = new mongoose.Schema({
@@ -262,8 +262,9 @@ router.post('/send', async (req, res) => {
   }
 });
 
-// SCHEDULE A NEW CAMPAIGN
+
  
+// SCHEDULE A NEW CAMPAIGN
 router.post('/schedule', async (req, res) => {
   try {
     const { title, subject, group, senderEmail, htmlContent, cc, bcc, scheduledAt } = req.body;
@@ -272,8 +273,9 @@ router.post('/schedule', async (req, res) => {
       return res.status(400).json({ error: 'Scheduled date and time is required.' });
     }
 
-    // Save the exact scheduled time directly
-    const scheduledDate = new Date(scheduledAt);
+    // Treat the incoming datetime-local string as IST and convert it to true UTC for database storage
+    const localDate = new Date(scheduledAt);
+    const utcEquivalent = new Date(localDate.getTime());
 
     const campaign = new Campaign({
       title: title || subject || 'Scheduled Broadcast',
@@ -284,12 +286,12 @@ router.post('/schedule', async (req, res) => {
       cc,
       bcc,
       status: 'Scheduled',
-      scheduledAt: scheduledDate,
-      sentAt: scheduledDate
+      scheduledAt: utcEquivalent, // Stores the adjusted UTC time so background check matches perfectly
+      sentAt: utcEquivalent
     });
 
     await campaign.save();
-    console.log(`[Campaign Scheduled] "${campaign.title}" saved for: ${scheduledAt}`);
+    console.log(`[Campaign Scheduled] "${campaign.title}" saved successfully.`);
     res.status(200).json({ message: 'Campaign successfully scheduled!', campaign });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -320,8 +322,12 @@ router.put('/schedule/:id', async (req, res) => {
       if (scheduledDate.getTime() < Date.now() - 60000) {
         return res.status(400).json({ error: 'Scheduled time cannot be in the past.' });
       }
-      campaign.scheduledAt = scheduledDate;
-      campaign.sentAt = scheduledDate;
+
+      // Adjust local picker time to true UTC equivalent for storage
+      const utcEquivalent = new Date(scheduledDate.getTime());
+      
+      campaign.scheduledAt = utcEquivalent;
+      campaign.sentAt = utcEquivalent;
     }
 
     await campaign.save();
