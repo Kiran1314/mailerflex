@@ -15,45 +15,26 @@ import {
 const CHART_COLORS = ['#3b82f6', '#10b981', '#6366f1', '#f43f5e'];
 
  
-// Helper for DD/MM/YYYY : HH:MM:SS AM/PM format (Explicitly converts UTC database dates to IST)
+ 
+// Helper for DD/MM/YYYY : HH:MM:SS AM/PM format (Preserves exact local system time)
 const formatDateTime = (dateInput) => {
   if (!dateInput) return '-';
   const d = new Date(dateInput);
   if (isNaN(d.getTime())) return '-';
 
-  // Options to force conversion to Indian Standard Time (IST / Asia/Kolkata)
-  const options = {
-    timeZone: 'Asia/Kolkata',
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: true
-  };
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
 
-  // Format using Intl.DateTimeFormat for bulletproof timezone mapping
-  try {
-    const formatter = new Intl.DateTimeFormat('en-GB', options);
-    const parts = formatter.formatToParts(d);
-    
-    let day, month, year, hour, minute, second, dayPeriod;
-    for (const part of parts) {
-      if (part.type === 'day') day = part.value;
-      if (part.type === 'month') month = part.value;
-      if (part.type === 'year') year = part.value;
-      if (part.type === 'hour') hour = part.value;
-      if (part.type === 'minute') minute = part.value;
-      if (part.type === 'second') second = part.value;
-      if (part.type === 'dayPeriod') dayPeriod = part.value;
-    }
+  let hours = d.getHours();
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const seconds = String(d.getSeconds()).padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  hours = hours ? hours : 12; 
+  const strHours = String(hours).padStart(2, '0');
 
-    return `${day}/${month}/${year} : ${hour}:${minute}:${second} ${dayPeriod || ''}`.trim();
-  } catch (e) {
-    // Fallback if Intl encounters any environment issues
-    return d.toLocaleString();
-  }
+  return `${day}/${month}/${year} : ${strHours}:${minutes}:${seconds} ${ampm}`;
 };
 
 // Helper to format date string to dd-mm-yyyy display format

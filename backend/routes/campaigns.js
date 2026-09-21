@@ -263,6 +263,7 @@ router.post('/send', async (req, res) => {
 });
 
 // SCHEDULE A NEW CAMPAIGN
+ 
 router.post('/schedule', async (req, res) => {
   try {
     const { title, subject, group, senderEmail, htmlContent, cc, bcc, scheduledAt } = req.body;
@@ -271,15 +272,8 @@ router.post('/schedule', async (req, res) => {
       return res.status(400).json({ error: 'Scheduled date and time is required.' });
     }
 
-    // Convert incoming date string and adjust for IST (UTC +5:30) if it's treated as local time
-    let scheduledDate = new Date(scheduledAt);
-    
-    // Optional safeguard: If your frontend sends local time without timezone 'Z', 
-    // ensure it aligns with IST by shifting the hours if needed, or store as parsed.
-    
-    if (scheduledDate.getTime() < Date.now() - 60000) {
-      return res.status(400).json({ error: 'Scheduled time cannot be in the past.' });
-    }
+    // Save the exact scheduled time directly
+    const scheduledDate = new Date(scheduledAt);
 
     const campaign = new Campaign({
       title: title || subject || 'Scheduled Broadcast',
@@ -295,12 +289,13 @@ router.post('/schedule', async (req, res) => {
     });
 
     await campaign.save();
-    console.log(`[Campaign Scheduled] "${campaign.title}" saved for: ${scheduledDate.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`);
+    console.log(`[Campaign Scheduled] "${campaign.title}" saved for: ${scheduledAt}`);
     res.status(200).json({ message: 'Campaign successfully scheduled!', campaign });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // UPDATE / RESCHEDULE A SCHEDULED CAMPAIGN
 router.put('/schedule/:id', async (req, res) => {
