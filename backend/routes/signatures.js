@@ -40,7 +40,11 @@ router.post('/', upload.single('signatureImage'), async (req, res) => {
       const targetPath = path.join(targetDir, newFileName);
       fs.renameSync(req.file.path, targetPath);
 
-      const imageTag = `<img src="/signatures/${newFileName}" alt="Signature Image" style="max-width:100%; height:auto;" />`;
+      // NEW: Construct the absolute URL dynamically based on the incoming request
+      const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
+      
+      // Update imageTag to use the absolute URL
+      const imageTag = `<img src="${baseUrl}/signatures/${newFileName}" alt="Signature Image" style="max-width:100%; height:auto;" />`;
       finalHtml = `${htmlContent}<br>${imageTag}`;
     }
 
