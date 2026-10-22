@@ -20,7 +20,10 @@ import { pollIncomingEmails } from './services/mailPoller.js';
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+
+// Increased payload limits to support large HTML templates and inline images
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Serve static signatures folder
 app.use('/signatures', express.static(path.join(process.cwd(), 'signatures')));
@@ -56,7 +59,6 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mailer-saas
     }, 30000);
 
     // 2. BULLETPROOF BACKGROUND SCHEDULER & DISPATCHER (Runs every 30 seconds safely)
-    // BULLETPROOF TIMEZONE-AGNOSTIC BACKGROUND SCHEDULER (Runs every 30 seconds)
     setInterval(async () => {
       try {
         const currentTimestamp = Date.now();
