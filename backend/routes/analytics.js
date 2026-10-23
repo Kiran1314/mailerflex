@@ -63,6 +63,13 @@ router.get('/', async (req, res) => {
     const totalClicked = await CampaignLog.countDocuments({ clicked: true });
     const totalUnsubscribed = await CampaignLog.countDocuments({ unsubscribed: true });
 
+    // NEW: Calculate emails sent strictly today for Dashboard limits display
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const emailsSentToday = await CampaignLog.countDocuments({
+      sentAt: { $gte: startOfToday }
+    });
+
     const deliveryRate = totalSent > 0 ? ((totalDelivered / totalSent) * 100).toFixed(1) : 0;
     const openRate = totalDelivered > 0 ? ((totalOpened / totalDelivered) * 100).toFixed(1) : 0;
     const clickRate = totalDelivered > 0 ? ((totalClicked / totalDelivered) * 100).toFixed(1) : 0;
@@ -82,10 +89,13 @@ router.get('/', async (req, res) => {
       if (log.status === 'Bounced') trendMap[dateStr].bounced += 1;
     });
 
-    const dailyTrends = Object.values(trendMap).reverse(); // Latest dates first
+    const dailyTrends = Object.values(trendMap).reverse();
 
     res.json({
       summary: {
+        emailsSentToday,     // NEW Metric provided to frontend
+        dailyLimit: 500,     // Adjust this to your specific Hostinger daily max limit if needed
+        hourlyLimit: 200,    // Hardcoded Hostinger queue limit reference
         totalSent,
         totalDelivered,
         totalBounced,
