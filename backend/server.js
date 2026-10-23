@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { startCampaignQueue } from './services/campaignQueue.js';
+
 import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
@@ -154,7 +154,7 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mailer-saas
         console.error('Background Scheduler Fatal Error:', schErr.message);
       }
     }, 30000);
-     startCampaignQueue();
+
     // Start server listener
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
   })
